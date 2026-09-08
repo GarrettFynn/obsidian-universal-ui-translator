@@ -26,6 +26,7 @@ export async function createActiveProvider(
       targetLang: settings.targetLang,
       baseUrl: cfg.apiBaseUrl || undefined,
       model: cfg.model || undefined,
+      disableThinking: cfg.disableThinking,
     });
   }
   if (id === "custom") {

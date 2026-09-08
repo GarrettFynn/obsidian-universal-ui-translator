@@ -21,6 +21,8 @@ export interface ProviderConfig {
   requestTemplate?: string;
   /** Custom Provider：响应 JSONPath */
   responsePath?: string;
+  /** OpenAI 兼容接口：请求体注入 thinking:{type:"disabled"}（DeepSeek V4 等默认开启思考的模型，R-34） */
+  disableThinking?: boolean;
 }
 
 export interface PluginSettings {

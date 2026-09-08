@@ -148,6 +148,15 @@ export class UutSettingTab extends PluginSettingTab {
       this.addTextSetting(el, "模型", "默认 gpt-4o-mini（低成本档）",
         cfg.model ?? "", "gpt-4o-mini",
         async (v) => { cfg.model = v; });
+      new Setting(el)
+        .setName("关闭思考模式")
+        .setDesc("DeepSeek V4 等默认开启“思考”的模型建议打开：UI 短文本无需推理，关掉后更快、更省 tokens")
+        .addToggle((t) =>
+          t.setValue(cfg.disableThinking ?? false).onChange(async (v) => {
+            cfg.disableThinking = v;
+            await this.plugin.saveSettings();
+          })
+        );
     } else if (s.activeProvider === "azure") {
       this.addTextSetting(el, "Region", "如 eastasia", cfg.region ?? "", "eastasia",
         async (v) => { cfg.region = v; });

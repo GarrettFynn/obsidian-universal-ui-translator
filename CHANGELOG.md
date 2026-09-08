@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.3] - 2026-09-09
+
+### Added
+
+- OpenAI 兼容接口新增「关闭思考模式」开关（R-34）：DeepSeek V4 系列等模型**默认开启思考模式**，对 UI 短文本会凭空产生上千 tokens 的推理输出——又慢（触发 30s 超时熔断）又贵（推理 tokens 照价计费）。打开开关后请求体注入 `thinking: {type: "disabled"}`，响应速度与费用恢复正常。冒烟实测：deepseek-v4-flash 默认配置下 598 条文本全超时、消耗数百万 tokens；关闭思考后秒回
+
 ## [1.0.2] - 2026-09-09
 
 ### Fixed
@@ -37,6 +43,7 @@ First public release.
 - **Privacy by design**: no telemetry, no outbound calls except the configured translation endpoint; API keys encrypted with Electron `safeStorage` (`secrets.bin`, per-machine ciphertext)
 - Desktop only (`isDesktopOnly: true`); Obsidian 1.5.0+
 
+[1.0.3]: https://github.com/GarrettFynn/obsidian-universal-ui-translator/releases/tag/1.0.3
 [1.0.2]: https://github.com/GarrettFynn/obsidian-universal-ui-translator/releases/tag/1.0.2
 [1.0.1]: https://github.com/GarrettFynn/obsidian-universal-ui-translator/releases/tag/1.0.1
 [1.0.0]: https://github.com/GarrettFynn/obsidian-universal-ui-translator/releases/tag/1.0.0

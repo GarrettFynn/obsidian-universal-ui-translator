@@ -21,6 +21,8 @@ export interface OpenAIProviderOptions {
   baseUrl?: string;
   /** 默认 gpt-4o-mini（设计文档 9.3.2 低成本档） */
   model?: string;
+  /** R-34：注入 thinking:{type:"disabled"}——DeepSeek V4 等默认开启思考的模型，UI 短文本无需推理 */
+  disableThinking?: boolean;
 }
 
 /** OpenAI 兼容 chat/completions 端点（设计文档 4.3.2） */
@@ -57,7 +59,13 @@ export class OpenAIProvider extends TranslationProvider {
         "Content-Type": "application/json",
         Authorization: `Bearer ${this.options.apiKey}`,
       },
-      body: JSON.stringify({ model: this.model, temperature: 0, messages }),
+      body: JSON.stringify({
+        model: this.model,
+        temperature: 0,
+        messages,
+        // R-34：思考模式默认开启的模型（DeepSeek V4 系列）会拖慢并放大计费，按需关闭
+        ...(this.options.disableThinking ? { thinking: { type: "disabled" } } : {}),
+      }),
     });
     if (res.status !== 200) {
       throw new Error(`OpenAI HTTP ${res.status}: ${res.text.slice(0, 200)}`);

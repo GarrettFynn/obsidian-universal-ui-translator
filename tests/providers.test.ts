@@ -68,6 +68,22 @@ describe("OpenAIProvider", () => {
     await p.translate("hi");
     expect(seen.req!.url).toBe("http://localhost:11434/v1/chat/completions");
   });
+
+  it("R-34：disableThinking 开启时请求体注入 thinking.disabled，缺省不注入", async () => {
+    const seen: { req?: HttpRequest } = {};
+    const http = captureHttp(200, { choices: [{ message: { content: "好" } }] }, seen);
+    const on = new OpenAIProvider(http, {
+      apiKey: "k",
+      targetLang: "zh-CN",
+      model: "deepseek-v4-flash",
+      disableThinking: true,
+    });
+    await on.translate("hi");
+    expect(JSON.parse(seen.req!.body!).thinking).toEqual({ type: "disabled" });
+    const off = new OpenAIProvider(http, { apiKey: "k", targetLang: "zh-CN" });
+    await off.translate("hi");
+    expect(JSON.parse(seen.req!.body!)).not.toHaveProperty("thinking");
+  });
 });
 
 describe("CustomProvider", () => {
