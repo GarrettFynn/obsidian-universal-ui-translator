@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] - 2026-09-09
+
+### Fixed
+
+- 「测试连接」改为真实试译（R-33）：此前 OpenAI 兼容接口只探测 `/models`，Key 有效即报成功，但**模型名错误或账户欠费（402）时翻译会全灭而测试仍显示成功**（DeepSeek 实测：/models 不校验模型与余额）。现在试译一个词，并按 401/402/404/429 给出分类提示
+- 翻译失败原因现在会写入 Console（`[uut] 翻译请求失败：…`，每段连续失败只记前 3 条），便于自查，不再需要盲目猜测熔断原因
+
 ## [1.0.1] - 2026-09-09
 
 ### Fixed
@@ -30,5 +37,6 @@ First public release.
 - **Privacy by design**: no telemetry, no outbound calls except the configured translation endpoint; API keys encrypted with Electron `safeStorage` (`secrets.bin`, per-machine ciphertext)
 - Desktop only (`isDesktopOnly: true`); Obsidian 1.5.0+
 
+[1.0.2]: https://github.com/GarrettFynn/obsidian-universal-ui-translator/releases/tag/1.0.2
 [1.0.1]: https://github.com/GarrettFynn/obsidian-universal-ui-translator/releases/tag/1.0.1
 [1.0.0]: https://github.com/GarrettFynn/obsidian-universal-ui-translator/releases/tag/1.0.0

@@ -105,6 +105,10 @@ export class TranslationCoordinator {
         this.authNotified = true;
         this.options.onAuthFailure?.();
       }
+      // R-33：失败原因上 Console（每段连续失败只记前 3 条，避免大批量刷屏）
+      if (this.consecutiveFailures < 3) {
+        console.warn(`[uut] 翻译请求失败：${String(e).slice(0, 160)}`);
+      }
       this.noteFailure(text);
       return text;
     }

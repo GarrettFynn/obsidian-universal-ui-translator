@@ -31,13 +31,30 @@ describe("OpenAIProvider", () => {
     await expect(p.translate("hi")).rejects.toThrow("401");
   });
 
-  it("validateConfig：200 为 ok，401 为 fail", async () => {
-    const ok = new OpenAIProvider(captureHttp(200, {}, {}), { apiKey: "k", targetLang: "zh-CN" });
-    expect((await ok.validateConfig()).ok).toBe(true);
+  it("validateConfig：真实试译探测，200 为 ok 且 401/402/404 分类提示（R-33）", async () => {
+    const ok = new OpenAIProvider(
+      captureHttp(200, { choices: [{ message: { content: "OK" } }] }, {}),
+      { apiKey: "k", targetLang: "zh-CN", model: "m1" }
+    );
+    const okRes = await ok.validateConfig();
+    expect(okRes.ok).toBe(true);
+    expect(okRes.message).toContain("m1");
     const bad = new OpenAIProvider(captureHttp(401, "", {}), { apiKey: "k", targetLang: "zh-CN" });
     const res = await bad.validateConfig();
     expect(res.ok).toBe(false);
     expect(res.message).toContain("401");
+    const poor = new OpenAIProvider(captureHttp(402, "", {}), { apiKey: "k", targetLang: "zh-CN" });
+    const poorRes = await poor.validateConfig();
+    expect(poorRes.ok).toBe(false);
+    expect(poorRes.message).toContain("余额不足");
+    const noModel = new OpenAIProvider(captureHttp(404, "", {}), {
+      apiKey: "k",
+      targetLang: "zh-CN",
+      model: "bad-model",
+    });
+    const noModelRes = await noModel.validateConfig();
+    expect(noModelRes.ok).toBe(false);
+    expect(noModelRes.message).toContain("bad-model");
   });
 
   it("自定义 Base URL 生效（本地模型端点，设计文档 4.3.2）", async () => {

@@ -72,20 +72,19 @@ export class OpenAIProvider extends TranslationProvider {
     return out.trim();
   }
 
+  /** 连通性测试：真实试译一个词（/models 浅探测测不出模型名错误与账户欠费 402，R-33 教训） */
   async validateConfig(): Promise<{ ok: boolean; message: string }> {
     if (!this.http) return { ok: false, message: "HttpClient 未注入" };
     try {
-      const res = await this.http({
-        url: `${this.baseUrl}/models`,
-        method: "GET",
-        headers: { Authorization: `Bearer ${this.options.apiKey}` },
-      });
-      if (res.status === 200) {
-        return { ok: true, message: `连接成功（模型：${this.model}）` };
-      }
-      return { ok: false, message: `HTTP ${res.status}：请检查 API Key 与 Base URL` };
+      const out = await this.translate("OK");
+      return { ok: true, message: `连接成功（模型：${this.model}，试译：${out.slice(0, 20)}）` };
     } catch (e) {
-      return { ok: false, message: `网络错误：${String(e)}` };
+      const msg = String(e);
+      if (/HTTP 40[13]/.test(msg)) return { ok: false, message: "API Key 无效或已失效（401/403）" };
+      if (/HTTP 402/.test(msg)) return { ok: false, message: "账户余额不足（402），请到服务商后台充值或续费" };
+      if (/HTTP 404/.test(msg)) return { ok: false, message: `模型不存在（404）：请检查模型名「${this.model}」` };
+      if (/HTTP 429/.test(msg)) return { ok: false, message: "触发限流（429），请稍后重试" };
+      return { ok: false, message: `连通性测试失败：${msg.slice(0, 150)}` };
     }
   }
 }
