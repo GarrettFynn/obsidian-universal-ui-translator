@@ -53,6 +53,25 @@ describe("DOMPatcher 集成", () => {
     expect(div.textContent).toBe("Open Settings");
   });
 
+  it("rescanAllText：已渲染未译节点重置记录后重新翻译（v1.1.0 配置热生效）", async () => {
+    let broken = true;
+    const coord = {
+      translate: async (t: string) => (broken ? t : `译:${t}`), // 失败时回退原文（与 coordinator 一致）
+    } as unknown as TranslationCoordinator;
+    const p = new DOMPatcher(coord, format, () => false);
+    patchers.push(p);
+    p.activate();
+    const div = document.createElement("div");
+    div.textContent = "Open Settings";
+    document.body.appendChild(div);
+    await wait(300);
+    expect(div.textContent).toBe("Open Settings"); // 失败保持原文，且 processed 已固化
+    broken = false; // 模拟用户修复配置
+    p.rescanAllText();
+    await wait(300);
+    expect(div.textContent).toBe("译:Open Settings");
+  });
+
   it("回写不引发循环；characterData 变化后同节点新文本重新翻译（A3 口径）", async () => {
     const coord = stubCoordinator();
     const p = new DOMPatcher(coord, format, () => false);

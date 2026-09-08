@@ -24,3 +24,28 @@
   width: 100%;
   min-height: 80px;
 }
+
+/* v1.1.0 社区市场条目级「译」按钮：条目右上角小按钮，悬停显现 */
+.community-item {
+  position: relative;
+}
+
+.uut-mkt-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 1px 7px;
+  font-size: 11px;
+  border-radius: 4px;
+  opacity: 0.35;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.uut-mkt-btn:hover {
+  opacity: 1;
+}
+
+.uut-mkt-btn[disabled] {
+  cursor: default;
+}

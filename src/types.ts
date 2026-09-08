@@ -53,6 +53,8 @@ export interface PluginSettings {
     menu: boolean;
     setting: boolean;
     dom: boolean;
+    /** v1.1.0 社区市场条目级「译」按钮；旧 data.json 无此键，读取处按 !== false 兜底（默认开） */
+    marketplace?: boolean;
   };
   debugMode: boolean;
 }
@@ -79,7 +81,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
     // 默认排除本插件自身（自我翻译防护，设计文档 4.4）
     pluginBlacklist: ["universal-ui-translator"],
   },
-  interceptors: { command: true, menu: true, setting: true, dom: true },
+  interceptors: { command: true, menu: true, setting: true, dom: true, marketplace: true },
   debugMode: false,
 };
 

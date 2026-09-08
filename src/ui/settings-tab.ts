@@ -241,10 +241,12 @@ export class UutSettingTab extends PluginSettingTab {
       { key: "menu", label: "菜单" },
       { key: "setting", label: "设置面板" },
       { key: "dom", label: "DOM 兜底" },
+      { key: "marketplace", label: "社区市场「译」按钮" },
     ];
     for (const item of interceptors) {
       new Setting(el).setName(item.label).addToggle((t) =>
-        t.setValue(s.interceptors[item.key]).onChange(async (v) => {
+        // marketplace 为 v1.1.0 新增键：旧 data.json 无此字段，?? true 兜底默认开
+        t.setValue(s.interceptors[item.key] ?? true).onChange(async (v) => {
           s.interceptors[item.key] = v;
           await this.plugin.saveSettings();
         })
@@ -268,10 +270,13 @@ export class UutSettingTab extends PluginSettingTab {
   /** 缓存：统计、清空、导出/导入（4.5 / FR-12） */
   private renderCache(el: HTMLElement): void {
     const stats = this.plugin.cache.stats();
+    const flushInfo = stats.lastFlushAt
+      ? `最后落盘 ${new Date(stats.lastFlushAt).toLocaleTimeString()}`
+      : "本会话尚未落盘（每 30s 检查，累计 100 条或 5 分钟自动落盘）";
     new Setting(el)
       .setName("缓存统计")
       .setDesc(
-        `条目 ${stats.size}，命中率 ${(stats.hitRate * 100).toFixed(1)}%（会话内内存统计）｜文件 translation-cache.json`
+        `条目 ${stats.size}，命中率 ${(stats.hitRate * 100).toFixed(1)}%（会话内内存统计）｜文件 translation-cache.json｜${flushInfo}`
       );
     new Setting(el)
       .setName("清空缓存")

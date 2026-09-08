@@ -60,6 +60,14 @@ describe("CacheManager", () => {
     expect(cm.stats().size).toBe(3);
   });
 
+  it("stats.lastFlushAt：未落盘为 null，flush 后记录时间（v1.1.0 缓存页展示）", async () => {
+    const cm = new CacheManager(new MemoryIO(), PATH, 5000, 20000, () => 1234567890);
+    expect(cm.stats().lastFlushAt).toBeNull();
+    cm.set(CacheManager.makeKey("Open Settings", "openai", "zh-CN", "m"), entry("Open Settings"));
+    await cm.flush();
+    expect(cm.stats().lastFlushAt).toBe(1234567890);
+  });
+
   it("版本维度惰性失效：插件升级后旧条目不再命中（设计文档 D5 / 测试用例 7）", () => {
     const cm = new CacheManager(new MemoryIO(), PATH);
     const key = CacheManager.makeKey("Open", "openai", "zh-CN", "m");

@@ -32,6 +32,8 @@ Obsidian 社区插件生态以英文为主，汉化依赖插件作者自觉。�
 - **智能过滤**：跳过代码、路径、URL、数字、已本地化文本；占位符保护 + 译后校验（占位符不一致的译文直接丢弃、不进缓存）
 - **成本控制**：100ms 批量聚合、并发限制、单请求超时（可配置）、月度字符预算自动熔断、用量统计
 - **作用域控制**：核心/社区开关、插件白名单/黑名单、拦截器独立开关、自定义跳过正则与术语表（固定译法优先于缓存与 API）
+- **社区插件市场按需翻译**：条目右上角「译」按钮，点哪条译哪条，缓存命中零成本——不必等全列表翻完
+- **配置热生效**：改配置即重置熔断并全量重扫界面，无需重启；缓存自动落盘（100 条或 5 分钟），崩溃不丢译文
 - **隐私优先**：无遥测、无外发请求（除你配置的翻译端点）；API Key 经 safeStorage 加密
 
 ### 安装
@@ -77,7 +79,7 @@ Obsidian 社区插件生态以英文为主，汉化依赖插件作者自觉。�
 ```bash
 npm install
 npm run build          # tsc 类型检查 + esbuild（刻意不做 minify）
-npm test               # 110 个单元与集成测试
+npm test               # 117 个单元与集成测试
 npm run test:coverage  # 核心模块行覆盖率 75.9%–100%
 ```
 
@@ -104,6 +106,8 @@ The plugin ships **no translation engine or glossary of its own**. Translation q
 - **Smart filtering**: skips code, paths, URLs, numbers and already-localized text; placeholder protection with post-translation validation (mismatched placeholders are discarded, never cached)
 - **Cost controls**: 100 ms batch aggregation, concurrency limit, per-request timeout (configurable), monthly character budget with automatic circuit-breaker, and usage statistics
 - **Scope control**: core/community toggles, per-plugin whitelist/blacklist, per-interceptor switches, custom skip-regexes and a user glossary (fixed translations that bypass cache and API)
+- **On-demand marketplace translation**: a "译" button on each community-plugin item translates just that entry — cache hits cost zero API calls
+- **Hot-applied settings**: config changes reset the circuit breaker and rescan the rendered UI instantly — no restart needed; cache auto-flushes to disk (at 100 entries or every 5 min), crash-safe
 - **Privacy by design**: no telemetry, no outbound calls except your configured translation endpoint; API keys encrypted with Electron `safeStorage`
 
 ### Installation
@@ -147,7 +151,7 @@ Typical cost: **zero** — the free tiers of all major providers cover UI-text v
 ```bash
 npm install
 npm run build          # tsc type-check + esbuild (deliberately not minified)
-npm test               # 110 unit & integration tests
+npm test               # 117 unit & integration tests
 npm run test:coverage  # core modules 75.9%–100% line coverage
 ```
 

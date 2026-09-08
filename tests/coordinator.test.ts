@@ -124,6 +124,21 @@ describe("TranslationCoordinator 数据流（设计文档 3.2）", () => {
     expect(stub.calls).toHaveLength(5); // 熔断期内未发起新请求
   });
 
+  it("resetFailures：熔断与负缓存立即复位——修好配置后无需重启（v1.1.0 热生效）", async () => {
+    const stub = new StubProvider();
+    stub.failTimes = 100;
+    const { coordinator } = setup({ provider: stub });
+    for (let i = 0; i < 5; i++) {
+      await coordinator.translate(`Label Number ${i}`, CTX);
+    }
+    expect(coordinator.isCircuitOpen()).toBe(true);
+    stub.failTimes = 0; // 模拟用户修好配置
+    coordinator.resetFailures();
+    expect(coordinator.isCircuitOpen()).toBe(false);
+    // 负缓存已清：此前失败的文本立即重译成功
+    expect(await coordinator.translate("Label Number 0", CTX)).toBe("译:Label Number 0");
+  });
+
   it("Provider 未配置时回退原文（4.4.2 未配置行为）", async () => {
     const { coordinator } = setup({ provider: null });
     expect(await coordinator.translate("Open Settings", CTX)).toBe("Open Settings");

@@ -13,6 +13,15 @@ export interface BatchTranslatorOptions {
   onQueueChange?: (pending: number) => void;
 }
 
+export interface BatchStats {
+  /** 本会话去重后的提交条数 */
+  submitted: number;
+  /** 翻译成功条数 */
+  completed: number;
+  /** 失败条数（含重试后仍失败） */
+  failed: number;
+}
+
 interface PendingEntry {
   text: string;
   context?: string;
@@ -32,6 +41,9 @@ export class BatchTranslator {
   private byText = new Map<string, PendingEntry[]>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private flushing = false;
+  private statSubmitted = 0;
+  private statCompleted = 0;
+  private statFailed = 0;
 
   constructor(
     private getProvider: () => TranslationProvider | null,
@@ -51,10 +63,20 @@ export class BatchTranslator {
       } else {
         this.byText.set(text, [entry]);
         this.queue.push(entry);
+        this.statSubmitted++;
       }
       this.schedule();
       this.options.onQueueChange?.(this.queue.length);
     });
+  }
+
+  /** 会话统计（v1.1.0 状态栏进度展示） */
+  stats(): BatchStats {
+    return {
+      submitted: this.statSubmitted,
+      completed: this.statCompleted,
+      failed: this.statFailed,
+    };
   }
 
   private schedule(): void {
@@ -147,16 +169,19 @@ export class BatchTranslator {
       if (value === null) {
         // 4.2.2 错误分类：4xx（Key 失效 / 参数错误 / 超额）不重试，直接失败走负缓存/熔断
         if (batchError !== null && BatchTranslator.isClientError(batchError)) {
+          this.statFailed++;
           for (const w of waiters) w.reject(batchError);
           continue;
         }
         try {
           value = await provider.translate(text, { context: waiters[0]?.context });
         } catch (e) {
+          this.statFailed++;
           for (const w of waiters) w.reject(e);
           continue;
         }
       }
+      this.statCompleted++;
       for (const w of waiters) w.resolve(value);
     }
   }

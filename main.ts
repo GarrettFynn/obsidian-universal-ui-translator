@@ -8,6 +8,7 @@ import { FilterEngine } from "./src/filters/filter-engine";
 import { CommandPatcher } from "./src/interceptors/command-patcher";
 import { formatWriteBack } from "./src/interceptors/display-mode";
 import { DOMPatcher } from "./src/interceptors/dom-patcher";
+import { MarketplacePatcher } from "./src/interceptors/marketplace-patcher";
 import { MenuPatcher } from "./src/interceptors/menu-patcher";
 import { SettingPatcher } from "./src/interceptors/setting-patcher";
 import { createActiveProvider } from "./src/providers";
@@ -33,6 +34,7 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
   private menuPatcher: MenuPatcher | null = null;
   private settingPatcher: SettingPatcher | null = null;
   private domPatcher: DOMPatcher | null = null;
+  private marketplacePatcher: MarketplacePatcher | null = null;
   private batcher!: BatchTranslator;
   private usageTracker!: UsageTracker;
   private statusBarItem: HTMLElement | null = null;
@@ -80,6 +82,19 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
       this.settings.cacheMaxEntries
     );
     await this.cache.load();
+    // v1.1.0 落盘兜底（4.2.3 既定策略的装配层实现）：每 30s 检查——累计 ≥100 条立即落盘；
+    // 否则有脏数据时每 5 分钟保底落盘。崩溃/强杀最多丢失 5 分钟译文，不再整段会话丢失
+    let lastFlushMark = Date.now();
+    this.registerInterval(
+      window.setInterval(() => {
+        const now = Date.now();
+        const pending = this.cache.pendingWrites;
+        if (pending >= 100 || (pending > 0 && now - lastFlushMark >= 5 * 60 * 1000)) {
+          lastFlushMark = now;
+          void this.cache.flush();
+        }
+      }, 30_000)
+    );
     const filter = new FilterEngine(this.settings.skipPatterns);
     this.provider = await createActiveProvider(this.settings, this.keyStorage, this.http);
     // 4.4.1：解密失败（secrets.bin 被同步到其他设备等）引导重新输入，不拿错误 Key 发请求
@@ -254,6 +269,10 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     this.coordinatorOptions.targetLang = this.settings.targetLang;
     this.coordinatorOptions.glossary = this.settings.glossary;
     this.coordinatorOptions.monthlyCharBudget = this.settings.monthlyCharBudget;
+    // v1.1.0：配置变更即重置熔断/负缓存与运行时译态，并全量重扫已渲染界面——修复"改完配置要重启才生效"
+    this.coordinator.resetFailures();
+    this.commandPatcher?.resetRuntimeTranslations();
+    this.domPatcher?.rescanAllText();
     if (this.settings.enabled && this.provider) {
       this.activateInterceptors();
     } else {
@@ -293,6 +312,11 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
       this.domPatcher = new DOMPatcher(this.coordinator, format, isBilingual, debug, this.app);
       this.domPatcher.activate();
     }
+    // v1.1.0：社区市场条目级「译」按钮（旧 data.json 无此键，!== false 视为开）
+    if (on.marketplace !== false && !this.marketplacePatcher) {
+      this.marketplacePatcher = new MarketplacePatcher(this.coordinator, format, debug, this.app);
+      this.marketplacePatcher.activate();
+    }
     // 用户手动关闭的通道即时停用（热生效矩阵，5.1）
     if (!on.command) {
       this.commandPatcher?.deactivate();
@@ -310,6 +334,10 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
       this.domPatcher?.deactivate();
       this.domPatcher = null;
     }
+    if (on.marketplace === false) {
+      this.marketplacePatcher?.deactivate();
+      this.marketplacePatcher = null;
+    }
   }
 
   private deactivateInterceptors(): void {
@@ -321,6 +349,8 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     this.settingPatcher = null;
     this.domPatcher?.deactivate();
     this.domPatcher = null;
+    this.marketplacePatcher?.deactivate();
+    this.marketplacePatcher = null;
   }
 
   /** D3 预热：遍历存量命令读取 name 触发 getter → batcher 聚合（同窗口去重） */
@@ -336,14 +366,32 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     }
   }
 
-  /** O-1：状态栏进度提示——有翻译在途时显示，空闲隐藏（data-uut 标记防自家通道拾取） */
+  /** O-1：状态栏进度提示——在途时显示剩余/已译计数，归零时短暂显示完成（data-uut 标记防自家通道拾取） */
+  private statusHideTimer: number | null = null;
+
   private updateStatusBar(pending: number): void {
     if (!this.statusBarItem) return;
+    if (this.statusHideTimer !== null) {
+      window.clearTimeout(this.statusHideTimer);
+      this.statusHideTimer = null;
+    }
     if (pending > 0) {
-      this.statusBarItem.setText(`UUT 翻译中… ${pending}`);
+      const done = this.batcher.stats().completed;
+      this.statusBarItem.setText(`UUT 翻译中… 剩 ${pending}（已译 ${done}）`);
       this.statusBarItem.style.display = "";
     } else {
-      this.statusBarItem.style.display = "none";
+      const done = this.batcher.stats().completed;
+      if (done > 0) {
+        this.statusBarItem.setText(`UUT ✓ 本会话已译 ${done} 条`);
+        this.statusBarItem.style.display = "";
+        // v1.1.0：完成提示停留 5 秒后隐藏
+        this.statusHideTimer = window.setTimeout(() => {
+          if (this.statusBarItem) this.statusBarItem.style.display = "none";
+          this.statusHideTimer = null;
+        }, 5000);
+      } else {
+        this.statusBarItem.style.display = "none";
+      }
     }
   }
 

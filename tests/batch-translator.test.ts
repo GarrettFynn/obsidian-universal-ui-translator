@@ -85,6 +85,22 @@ describe("BatchTranslator（设计文档 4.2.2）", () => {
     expect(p.singles).toEqual(["A", "B"]); // 拆单条重试各一次
   });
 
+  it("stats：提交/成功/失败去重计数（v1.1.0 状态栏进度）", async () => {
+    const p = new RecordingProvider();
+    p.batchFailures = 1; // 批量整体失败 → 拆单条
+    p.failSingleTexts.add("C");
+    const bt = setup(p);
+    const [a, , c] = [
+      bt.submit("A"),
+      bt.submit("A"), // 去重：同文本共享，不重复计数
+      bt.submit("C").catch(() => "failed"),
+    ];
+    await bt.flush();
+    expect(await a).toBe("译:A");
+    expect(await c).toBe("failed");
+    expect(bt.stats()).toEqual({ submitted: 2, completed: 1, failed: 1 });
+  });
+
   it("单条重试仍失败 → 该条 reject，其余正常（不无限重试）", async () => {
     const p = new RecordingProvider();
     p.batchFailures = 1;

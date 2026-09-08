@@ -135,6 +135,16 @@ export class DOMPatcher {
     for (const doc of docs) this.observeDocument(doc);
   }
 
+  /** 配置变更热生效（v1.1.0）：重置去重/重试记录，对所有已纳管 document 全量重扫——已渲染未译的界面就地重译 */
+  rescanAllText(): void {
+    this.processed = new WeakMap();
+    this.retryAttempts = new WeakMap();
+    for (const doc of this.documents) {
+      if (doc.body) this.collectTextNodes(doc.body);
+    }
+    this.scheduleIdle();
+  }
+
   private observeDocument(doc: Document): void {
     if (!doc.body || this.documents.has(doc)) return;
     this.documents.add(doc);

@@ -6,6 +6,8 @@ export interface CacheStats {
   hits: number;
   misses: number;
   hitRate: number;
+  /** 最后一次成功落盘时间戳（ms）；未落盘过为 null（v1.1.0 缓存页展示） */
+  lastFlushAt: number | null;
 }
 
 const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
@@ -33,6 +35,7 @@ export class CacheManager {
   private misses = 0;
   private loaded = false;
   private dirtyCount = 0;
+  private lastFlushAt: number | null = null;
 
   constructor(
     private io: TextFileIO,
@@ -135,6 +138,7 @@ export class CacheManager {
     };
     await this.io.write(this.filePath, JSON.stringify(file, null, 2));
     this.dirtyCount = 0;
+    this.lastFlushAt = this.now();
   }
 
   stats(): CacheStats {
@@ -144,6 +148,7 @@ export class CacheManager {
       hits: this.hits,
       misses: this.misses,
       hitRate: total === 0 ? 0 : this.hits / total,
+      lastFlushAt: this.lastFlushAt,
     };
   }
 

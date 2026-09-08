@@ -118,6 +118,14 @@ export class TranslationCoordinator {
     return this.now() < this.circuitOpenUntil;
   }
 
+  /** 配置变更热生效（v1.1.0）：清熔断、负缓存与鉴权提示状态——修好配置后无需重启/苦等 10 分钟 */
+  resetFailures(): void {
+    this.circuitOpenUntil = 0;
+    this.consecutiveFailures = 0;
+    this.negativeCache.clear();
+    this.authNotified = false;
+  }
+
   private noteFailure(text: string): void {
     this.negativeCache.set(text, this.now());
     this.consecutiveFailures++;
