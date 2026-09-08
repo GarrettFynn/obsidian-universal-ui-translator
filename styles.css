@@ -1,0 +1,26 @@
+/* Universal UI Translator — 样式统一使用 .uut- 前缀（设计文档 5.4 节） */
+
+/* 设置面板五分页（4.5）：自建 tab 组件样式（只作用于插件自建元素，不覆盖主题） */
+.uut-tabbar {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  padding-bottom: 8px;
+}
+
+.uut-tab {
+  padding: 4px 10px;
+  border-radius: 4px;
+}
+
+.uut-tab-active {
+  font-weight: 600;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.uut-tab-content textarea {
+  width: 100%;
+  min-height: 80px;
+}

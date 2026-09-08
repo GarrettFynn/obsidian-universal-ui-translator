@@ -1,0 +1,9 @@
+{
+  "id": "universal-ui-translator",
+  "name": "Universal UI Translator",
+  "version": "1.0.0",
+  "minAppVersion": "1.5.0",
+  "description": "Translate Obsidian core and community plugin UI with your own translation API.",
+  "author": "GarrettFynn",
+  "isDesktopOnly": true
+}

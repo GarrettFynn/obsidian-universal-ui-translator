@@ -1,0 +1,24 @@
+# node
+node_modules/
+
+# obsidian build output
+main.js
+*.js.map
+
+# obsidian vault data
+data.json
+
+# spikes build output
+spikes/*/main.js
+
+# os
+.DS_Store
+Thumbs.db
+
+
+# test coverage report
+coverage/
+
+# internal process docs & one-off spikes (archived on private remote only)
+文档/
+spikes/
