@@ -1,6 +1,6 @@
 {
   "name": "obsidian-universal-ui-translator",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Translate Obsidian core and community plugin UI with your own translation API.",
   "main": "main.js",
   "scripts": {

@@ -87,4 +87,23 @@ describe("CommandPatcher 集成（8.1：劫持→翻译→回写→还原全链�
     await tick();
     expect(commands[0].name).toBe("译:Open Settings (Open Settings)");
   });
+
+  it("存量扫描延迟到布局就绪后（启动期 checkCallback 抛错防护，1.13.7 实测复现）", async () => {
+    let ready: (() => void) | null = null;
+    const app = {
+      commands: { listCommands: () => commands },
+      workspace: { onLayoutReady: (cb: () => void) => { ready = cb; } },
+    };
+    const commands: Command[] = [{ id: "app:open-settings", name: "Open Settings" }];
+    const p = new CommandPatcher(app as never, stubCoordinator(), () => false);
+    patchers.push(p);
+    expect(p.activate()).toBe(true);
+    // 布局未就绪：存量命令尚未 patch（无 getter，不会被半截状态的 listCommands 漏掉）
+    expect(Object.getOwnPropertyDescriptor(commands[0], "name")?.get).toBeUndefined();
+    ready!();
+    expect(Object.getOwnPropertyDescriptor(commands[0], "name")?.get).toBeTypeOf("function");
+    void commands[0].name;
+    await tick();
+    expect(commands[0].name).toBe("译:Open Settings");
+  });
 });

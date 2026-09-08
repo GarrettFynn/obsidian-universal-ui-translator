@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-09-09
+
+### Fixed
+
+- 命令面板通道的存量扫描延迟到工作区布局就绪后执行。此前启动早期调用 `listCommands()` 会导致部分核心命令（如 `workspace:toggle-stacked-tabs`、`workspace:close-others`）的 checkCallback 抛错（Console 红字），且这些命令被当次过滤漏掉而永远漏译（Obsidian 1.13.7 启动期实测复现）
+- 预热扫描同样改为布局就绪后执行
+- 性能下界测试阈值按环境区分（本地 100ms / CI 300ms），消除 CI 共享 runner 抖动造成的误报
+
 ## [1.0.0] - 2026-09-09
 
 First public release.
@@ -22,4 +30,5 @@ First public release.
 - **Privacy by design**: no telemetry, no outbound calls except the configured translation endpoint; API keys encrypted with Electron `safeStorage` (`secrets.bin`, per-machine ciphertext)
 - Desktop only (`isDesktopOnly: true`); Obsidian 1.5.0+
 
+[1.0.1]: https://github.com/GarrettFynn/obsidian-universal-ui-translator/releases/tag/1.0.1
 [1.0.0]: https://github.com/GarrettFynn/obsidian-universal-ui-translator/releases/tag/1.0.0

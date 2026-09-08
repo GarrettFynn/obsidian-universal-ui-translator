@@ -30,17 +30,33 @@ export class CommandPatcher {
       new Notice("UUT：命令通道翻译已停用（addCommand 特征检测失败）");
       return false;
     }
-    // 路径 1：存量命令——核心命令 + 先于本插件加载的插件命令
-    const commandsApi = (
-      this.app as unknown as { commands?: { listCommands?: () => Command[] } }
-    ).commands;
-    if (commandsApi && typeof commandsApi.listCommands === "function") {
-      for (const command of commandsApi.listCommands()) {
-        this.patchCommand(command, this.resolvePluginId(command));
+    // 路径 1：存量命令——核心命令 + 先于本插件加载的插件命令。
+    // 须待工作区布局就绪后再扫：listCommands() 内部会对每条命令执行 checkCallback(true)，
+    // 启动早期 activeLeaf 为 null 时部分核心命令（workspace:toggle-stacked-tabs、
+    // workspace:close-others 等）抛错——污染 Console 且被当次 filter 漏掉而永远漏译
+    // （Obsidian 1.13.7 启动期实测复现）。
+    const sweep = () => {
+      const commandsApi = (
+        this.app as unknown as { commands?: { listCommands?: () => Command[] } }
+      ).commands;
+      if (commandsApi && typeof commandsApi.listCommands === "function") {
+        for (const command of commandsApi.listCommands()) {
+          this.patchCommand(command, this.resolvePluginId(command));
+        }
+        this.debug(`CommandPatcher 存量 patch ${this.patched.size} 条`);
+      } else {
+        // S2 已实测可用；若未来 Obsidian 变更此内部 API，存量命令由 DOMPatcher 兜底（D1）
+        this.debug("app.commands.listCommands 不可用，存量命令留待 DOMPatcher 兜底");
       }
+    };
+    // onLayoutReady 在布局已就绪时立即执行回调，故设置变更触发的运行时重载不受延迟影响
+    const workspace = (
+      this.app as unknown as { workspace?: { onLayoutReady?: (cb: () => void) => void } }
+    ).workspace;
+    if (workspace && typeof workspace.onLayoutReady === "function") {
+      workspace.onLayoutReady(sweep);
     } else {
-      // S2 已实测可用；若未来 Obsidian 变更此内部 API，存量命令由 DOMPatcher 兜底（D1）
-      this.debug("app.commands.listCommands 不可用，存量命令留待 DOMPatcher 兜底");
+      sweep();
     }
     // 路径 2：增量劫持——本插件加载后才注册的命令
     this.originalAddCommand = Plugin.prototype.addCommand;
@@ -52,7 +68,7 @@ export class CommandPatcher {
       self.patchCommand(command, this.manifest?.id ?? "unknown");
       return self.originalAddCommand!.call(this, command);
     };
-    this.debug(`CommandPatcher 已激活，存量 patch ${this.patched.size} 条`);
+    this.debug("CommandPatcher 已激活（addCommand 增量劫持就绪；存量扫描待布局就绪）");
     return true;
   }
 

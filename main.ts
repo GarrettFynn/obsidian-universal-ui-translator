@@ -122,8 +122,11 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     // 4.4.2：Provider 未配置时拦截器不激活（零 DOM 干预、零网络请求）
     if (this.settings.enabled && this.provider) {
       this.activateInterceptors();
-      // D3 预热：空闲时遍历存量命令触发 getter → batcher 聚合，首次打开面板即命中缓存
-      window.setTimeout(() => this.prewarmCommands(), 2000);
+      // D3 预热：空闲时遍历存量命令触发 getter → batcher 聚合，首次打开面板即命中缓存。
+      // 同样须待布局就绪（listCommands 依赖就绪的工作区，见 CommandPatcher.activate 注记）
+      this.app.workspace.onLayoutReady(() =>
+        window.setTimeout(() => this.prewarmCommands(), 2000)
+      );
     } else if (this.settings.enabled && !this.provider) {
       new Notice("UUT：请先在设置页配置翻译引擎与 API Key");
     }
