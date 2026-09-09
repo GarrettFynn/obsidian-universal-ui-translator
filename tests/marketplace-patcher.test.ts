@@ -56,4 +56,17 @@ describe("MarketplacePatcher（v1.1.0 社区市场条目级「译」按钮）", 
     await tick();
     expect(late.querySelector(".uut-mkt-btn")).toBeNull();
   });
+
+  it("adoptDocument：纳管 window.open 弹出的独立窗口 document 并注入按钮（v1.1.1 盲区修复）", () => {
+    const p = new MarketplacePatcher(stubCoordinator(), (t) => t);
+    patchers.push(p);
+    p.activate();
+    const doc = document.implementation.createHTMLDocument("第三方插件");
+    doc.body.innerHTML =
+      '<div class="community-item"><div class="community-item-name">Plugin X</div><div class="community-item-desc">Some desc</div></div>';
+    p.adoptDocument(doc);
+    expect(doc.querySelector(".uut-mkt-btn")).toBeTruthy();
+    p.adoptDocument(doc); // 幂等：重复纳管不重复注入
+    expect(doc.querySelectorAll(".uut-mkt-btn")).toHaveLength(1);
+  });
 });

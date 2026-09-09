@@ -43,6 +43,13 @@ export class MarketplacePatcher {
     this.documents.clear();
   }
 
+  /** v1.1.1：纳管 window.open 弹出的独立窗口 document（社区市场浏览器在其中渲染条目；幂等） */
+  adoptDocument(doc: Document): void {
+    if (!doc.body || this.documents.has(doc)) return;
+    this.observeDocument(doc);
+    this.injectButtons(doc);
+  }
+
   private rescanDocuments(): void {
     const docs = new Set<Document>([document]);
     const modalEl = (

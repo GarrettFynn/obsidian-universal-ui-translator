@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-09-10
+
+### Fixed
+
+- **社区插件市场真正覆盖了**（自动翻译 + 条目「译」按钮）：CDP 实测 1.13.7 发现市场浏览器是 `window.open` 弹出的**第三个独立窗口**（opener=主窗口），不在 workspace leaves 与 `app.setting` 引用链内，此前完全够不到。新增 `WindowOpenHook`：包装主窗口 `window.open` 捕获弹窗并纳管其 document（卸载时完整还原）。注意：插件加载前已打开的市场窗口无法追溯捕获，重开一次即可
+
 ## [1.1.0] - 2026-09-09
 
 首个公开版本冒烟反馈（BRAT 渠道）后的改进批次。
@@ -57,6 +63,7 @@ First public release.
 - **Privacy by design**: no telemetry, no outbound calls except the configured translation endpoint; API keys encrypted with Electron `safeStorage` (`secrets.bin`, per-machine ciphertext)
 - Desktop only (`isDesktopOnly: true`); Obsidian 1.5.0+
 
+[1.1.1]: https://github.com/GarrettFynn/obsidian-universal-ui-translator/releases/tag/1.1.1
 [1.1.0]: https://github.com/GarrettFynn/obsidian-universal-ui-translator/releases/tag/1.1.0
 [1.0.3]: https://github.com/GarrettFynn/obsidian-universal-ui-translator/releases/tag/1.0.3
 [1.0.2]: https://github.com/GarrettFynn/obsidian-universal-ui-translator/releases/tag/1.0.2

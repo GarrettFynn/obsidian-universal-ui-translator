@@ -11,6 +11,7 @@ import { DOMPatcher } from "./src/interceptors/dom-patcher";
 import { MarketplacePatcher } from "./src/interceptors/marketplace-patcher";
 import { MenuPatcher } from "./src/interceptors/menu-patcher";
 import { SettingPatcher } from "./src/interceptors/setting-patcher";
+import { WindowOpenHook } from "./src/interceptors/window-open-hook";
 import { createActiveProvider } from "./src/providers";
 import { HttpClient, TranslationProvider, withTimeout } from "./src/providers/base-provider";
 import { UutSettingTab } from "./src/ui/settings-tab";
@@ -35,6 +36,7 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
   private settingPatcher: SettingPatcher | null = null;
   private domPatcher: DOMPatcher | null = null;
   private marketplacePatcher: MarketplacePatcher | null = null;
+  private windowHook: WindowOpenHook | null = null;
   private batcher!: BatchTranslator;
   private usageTracker!: UsageTracker;
   private statusBarItem: HTMLElement | null = null;
@@ -171,6 +173,8 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     this.menuPatcher?.deactivate();
     this.settingPatcher?.deactivate();
     this.domPatcher?.deactivate();
+    this.marketplacePatcher?.deactivate();
+    this.windowHook?.deactivate();
     await this.batcher.flush();
     await this.cache.flush();
     console.log("[uut] plugin unloaded");
@@ -317,6 +321,12 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
       this.marketplacePatcher = new MarketplacePatcher(this.coordinator, format, debug, this.app);
       this.marketplacePatcher.activate();
     }
+    // v1.1.1：社区市场浏览器是 window.open 弹出的独立窗口（CDP 实测），
+    // 不在 leaves / app.setting 引用链内——钩子捕获弹窗并纳管其 document（DOM 兜底 + 市场按钮）
+    if ((on.dom || on.marketplace !== false) && !this.windowHook) {
+      const hook = new WindowOpenHook();
+      if (hook.activate((win) => this.adoptPopupWindow(win))) this.windowHook = hook;
+    }
     // 用户手动关闭的通道即时停用（热生效矩阵，5.1）
     if (!on.command) {
       this.commandPatcher?.deactivate();
@@ -351,6 +361,16 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     this.domPatcher = null;
     this.marketplacePatcher?.deactivate();
     this.marketplacePatcher = null;
+    this.windowHook?.deactivate();
+    this.windowHook = null;
+  }
+
+  /** v1.1.1：window.open 弹窗就绪回调——纳管其 document 到 DOM 兜底与市场按钮通道 */
+  private adoptPopupWindow(win: Window): void {
+    const doc = win.document;
+    if (!doc?.body) return;
+    this.domPatcher?.adoptDocument(doc);
+    this.marketplacePatcher?.adoptDocument(doc);
   }
 
   /** D3 预热：遍历存量命令读取 name 触发 getter → batcher 聚合（同窗口去重） */

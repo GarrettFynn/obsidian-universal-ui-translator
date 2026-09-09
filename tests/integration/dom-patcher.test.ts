@@ -72,6 +72,21 @@ describe("DOMPatcher 集成", () => {
     expect(div.textContent).toBe("译:Open Settings");
   });
 
+  it("adoptDocument：纳管 window.open 弹窗 document 并翻译其中存量文本（v1.1.1 市场盲区修复）", async () => {
+    const p = new DOMPatcher(stubCoordinator(), format, () => false);
+    patchers.push(p);
+    p.activate();
+    const doc = document.implementation.createHTMLDocument("第三方插件");
+    doc.body.innerHTML =
+      '<div class="community-item"><div class="community-item-desc">Best plugin ever</div></div>';
+    p.adoptDocument(doc);
+    await wait(300);
+    expect(doc.body.textContent).toContain("译:Best plugin ever");
+    // 幂等：重复纳管不重复观察
+    p.adoptDocument(doc);
+    expect(doc.body.textContent).toContain("译:Best plugin ever");
+  });
+
   it("回写不引发循环；characterData 变化后同节点新文本重新翻译（A3 口径）", async () => {
     const coord = stubCoordinator();
     const p = new DOMPatcher(coord, format, () => false);

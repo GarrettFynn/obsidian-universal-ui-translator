@@ -145,6 +145,11 @@ export class DOMPatcher {
     this.scheduleIdle();
   }
 
+  /** v1.1.1：纳管 window.open 弹出的独立窗口 document（社区市场浏览器盲区修复；幂等） */
+  adoptDocument(doc: Document): void {
+    this.observeDocument(doc);
+  }
+
   private observeDocument(doc: Document): void {
     if (!doc.body || this.documents.has(doc)) return;
     this.documents.add(doc);
