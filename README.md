@@ -33,6 +33,7 @@ Obsidian 社区插件生态以英文为主，汉化依赖插件作者自觉。�
 - **成本控制**：100ms 批量聚合、并发限制、单请求超时（可配置）、月度字符预算自动熔断、用量统计
 - **作用域控制**：核心/社区开关、插件白名单/黑名单、拦截器独立开关、自定义跳过正则与术语表（固定译法优先于缓存与 API）
 - **社区插件市场按需翻译**：条目右上角「译」按钮，点哪条译哪条，缓存命中零成本——不必等全列表翻完
+- **目标语言任意**：默认简体中文，可填 `ja` / `zh-Hant` / `ko` / `fr` 等任意语言代码；缓存按语言隔离，随时切换互不影响
 - **配置热生效**：改配置即重置熔断并全量重扫界面，无需重启；缓存自动落盘（100 条或 5 分钟），崩溃不丢译文
 - **隐私优先**：无遥测、无外发请求（除你配置的翻译端点）；API Key 经 safeStorage 加密
 
@@ -107,6 +108,7 @@ The plugin ships **no translation engine or glossary of its own**. Translation q
 - **Cost controls**: 100 ms batch aggregation, concurrency limit, per-request timeout (configurable), monthly character budget with automatic circuit-breaker, and usage statistics
 - **Scope control**: core/community toggles, per-plugin whitelist/blacklist, per-interceptor switches, custom skip-regexes and a user glossary (fixed translations that bypass cache and API)
 - **On-demand marketplace translation**: a "译" button on each community-plugin item translates just that entry — cache hits cost zero API calls
+- **Any target language**: defaults to `zh-CN`; set `ja` / `zh-Hant` / `ko` / `fr` or any language code — the cache is keyed per language, switch anytime
 - **Hot-applied settings**: config changes reset the circuit breaker and rescan the rendered UI instantly — no restart needed; cache auto-flushes to disk (at 100 entries or every 5 min), crash-safe
 - **Privacy by design**: no telemetry, no outbound calls except your configured translation endpoint; API keys encrypted with Electron `safeStorage`
 

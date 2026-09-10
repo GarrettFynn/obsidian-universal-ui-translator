@@ -35,4 +35,9 @@ jobs:
         run: |
           tag="${GITHUB_REF#refs/tags/}"
           gh release delete "$tag" --yes || true
-          gh release create "$tag" main.js manifest.json styles.css --title "$tag" --generate-notes
+          {
+            cat .github/release-intro.md
+            echo
+            awk -v v="$tag" 'index($0, "## [" v "]") == 1 {f=1; next} /^## \[/ && f {exit} f' CHANGELOG.md
+          } > release-body.md
+          gh release create "$tag" main.js manifest.json styles.css --title "$tag" --notes-file release-body.md
