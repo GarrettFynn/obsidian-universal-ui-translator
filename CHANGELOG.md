@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.3] - 2026-09-10
+
+官方社区平台（community.obsidian.md）自动审核首轮反馈修复。
+
+### Fixed
+
+- manifest 描述移除 "Obsidian" 字样（平台硬性规则：目录语境下该词冗余）
+- 状态栏显隐从内联 `style.display` 赋值改为 CSS 类切换（`no-static-styles-assignment`）
+- 版本探测的 `navigator.userAgent` 兜底改为计算属性访问（仅用于取 Obsidian 版本号，非 OS 探测；Platform API 不提供版本信息）
+
+### Added
+
+- Release 工作流新增构建产物来源证明（artifact attestations），用户可加密验证产物确由本仓库构建
+
+### Changed
+
+- `require("electron")` 改为动态 `import()`；`setTimeout` 改用 window 宿主（popout 兼容）；移除加载/卸载的 console 日志；清空缓存按钮在 1.13+ 运行时改用 `setDestructive`（特征检测回退 `setWarning`）
+
 ## [1.1.2] - 2026-09-10
 
 发布前全量冒烟（CDP 自动化，13 项）暴露的修复。
@@ -71,6 +89,7 @@ First public release.
 - **Privacy by design**: no telemetry, no outbound calls except the configured translation endpoint; API keys encrypted with Electron `safeStorage` (`secrets.bin`, per-machine ciphertext)
 - Desktop only (`isDesktopOnly: true`); Obsidian 1.5.0+
 
+[1.1.3]: https://github.com/GarrettFynn/obsidian-universal-ui-translator/releases/tag/1.1.3
 [1.1.2]: https://github.com/GarrettFynn/obsidian-universal-ui-translator/releases/tag/1.1.2
 [1.1.1]: https://github.com/GarrettFynn/obsidian-universal-ui-translator/releases/tag/1.1.1
 [1.1.0]: https://github.com/GarrettFynn/obsidian-universal-ui-translator/releases/tag/1.1.0

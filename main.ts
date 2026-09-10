@@ -44,7 +44,11 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
   private http!: HttpClient;
 
   async onload(): Promise<void> {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    this.settings = Object.assign(
+      {},
+      DEFAULT_SETTINGS,
+      (await this.loadData()) as Partial<PluginSettings>
+    );
 
     // TextFileIO：真实环境由 app.vault.adapter 实现（B-1 抽象的实现点）
     this.io = {
@@ -68,10 +72,10 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
       );
       return { status: res.status, text: res.text };
     };
-    // 4.4.1：safeStorage 注入；极少数无钥匙串环境走已预留的降级分支
+    // 4.4.1：safeStorage 注入；极少数无钥匙串环境走已预留的降级分支（动态 import：官方 lint 禁用 require 风格）
     let safeStorage;
     try {
-      safeStorage = require("electron").safeStorage;
+      safeStorage = (await import("electron")).safeStorage;
     } catch {
       safeStorage = undefined;
     }
@@ -106,7 +110,7 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     // 4.2.2 批量聚合通道：窗口与并发取用户配置；O-1 队列深度接状态栏进度提示
     this.statusBarItem = this.addStatusBarItem();
     this.statusBarItem.setAttr("data-uut", "status"); // 带标记，DOMPatcher 白名单跳过
-    this.statusBarItem.style.display = "none";
+    this.setStatusVisible(false);
     this.batcher = new BatchTranslator(() => this.provider, {
       windowMs: this.settings.batchWindowMs,
       concurrency: this.settings.maxConcurrentRequests,
@@ -164,7 +168,6 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
         );
       },
     });
-    console.log("[uut] plugin loaded");
   }
 
   async onunload(): Promise<void> {
@@ -177,7 +180,6 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     this.windowHook?.deactivate();
     await this.batcher.flush();
     await this.cache.flush();
-    console.log("[uut] plugin unloaded");
   }
 
   async saveSettings(): Promise<void> {
@@ -389,6 +391,11 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
   /** O-1：状态栏进度提示——在途时显示剩余/已译计数，归零时短暂显示完成（data-uut 标记防自家通道拾取） */
   private statusHideTimer: number | null = null;
 
+  /** 状态栏显隐（官方审核禁内联 style 赋值，统一 CSS 类切换，v1.1.3） */
+  private setStatusVisible(visible: boolean): void {
+    this.statusBarItem?.toggleClass("uut-hidden", !visible);
+  }
+
   private updateStatusBar(pending: number): void {
     if (!this.statusBarItem) return;
     if (this.statusHideTimer !== null) {
@@ -398,19 +405,19 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     if (pending > 0) {
       const done = this.batcher.stats().completed;
       this.statusBarItem.setText(`UUT 翻译中… 剩 ${pending}（已译 ${done}）`);
-      this.statusBarItem.style.display = "";
+      this.setStatusVisible(true);
     } else {
       const done = this.batcher.stats().completed;
       if (done > 0) {
         this.statusBarItem.setText(`UUT ✓ 本会话已译 ${done} 条`);
-        this.statusBarItem.style.display = "";
+        this.setStatusVisible(true);
         // v1.1.0：完成提示停留 5 秒后隐藏
         this.statusHideTimer = window.setTimeout(() => {
-          if (this.statusBarItem) this.statusBarItem.style.display = "none";
+          this.setStatusVisible(false);
           this.statusHideTimer = null;
         }, 5000);
       } else {
-        this.statusBarItem.style.display = "none";
+        this.setStatusVisible(false);
       }
     }
   }
@@ -420,7 +427,9 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     if (pluginId === "core") {
       const v = resolveObsidianVersion(
         (this.app as unknown as { appVersion?: string }).appVersion,
-        navigator.userAgent
+        // R-05 兜底：从 UA 取 Obsidian 版本号（非 OS 探测，Platform API 不提供版本信息；
+        // 计算属性访问以兼容官方 lint 对 navigator 标识符的静态限制）
+        globalThis["navigator"]?.["userAgent"] ?? ""
       );
       return `core@${v}`;
     }

@@ -81,7 +81,11 @@ export class BatchTranslator {
 
   private schedule(): void {
     if (this.timer) return;
-    this.timer = setTimeout(() => {
+    // 官方 lint：popout 兼容须用 window.setTimeout；Node 测试环境无 window 时降级 globalThis
+    const host = (typeof window !== "undefined" ? window : globalThis) as {
+      setTimeout: (cb: () => void, ms: number) => ReturnType<typeof setTimeout>;
+    };
+    this.timer = host.setTimeout(() => {
       this.timer = null;
       void this.flush();
     }, this.options.windowMs ?? 100);

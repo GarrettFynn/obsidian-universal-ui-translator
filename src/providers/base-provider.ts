@@ -21,10 +21,14 @@ export type HttpClient = (req: HttpRequest) => Promise<HttpResponse>;
 
 /** 单请求超时包装（4.2.2 / R-23）：超时 reject，由调用方按失败处理（负缓存/熔断） */
 export function withTimeout<T>(p: Promise<T>, ms: number, label = "请求"): Promise<T> {
+  // 官方 lint：popout 兼容须用 window.setTimeout；Node 测试环境无 window 时降级 globalThis
+  const host = (typeof window !== "undefined" ? window : globalThis) as {
+    setTimeout: (cb: () => void, ms: number) => unknown;
+  };
   return Promise.race([
     p,
     new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`${label}超时（${ms}ms）`)), ms)
+      host.setTimeout(() => reject(new Error(`${label}超时（${ms}ms）`)), ms)
     ),
   ]);
 }

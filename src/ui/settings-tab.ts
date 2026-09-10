@@ -281,15 +281,20 @@ export class UutSettingTab extends PluginSettingTab {
     new Setting(el)
       .setName("清空缓存")
       .setDesc("同时重置界面已显示的译文（R-07 联动）")
-      .addButton((b) =>
-        b.setButtonText("清空缓存").setWarning().onClick(async () => {
+      .addButton((b) => {
+        b.setButtonText("清空缓存");
+        // 1.13 起 setWarning 弃用 → setDestructive；低版本运行时特征检测回退
+        const btn = b as unknown as { setDestructive?: () => unknown };
+        if (typeof btn.setDestructive === "function") btn.setDestructive();
+        else b.setWarning();
+        b.onClick(async () => {
           this.plugin.cache.clear();
           this.plugin.resetCommandTranslations();
           await this.plugin.cache.flush();
           new Notice("UUT：缓存已清空，界面译文将在下次访问时重新翻译");
           await this.display();
-        })
-      );
+        });
+      });
     new Setting(el)
       .setName("导出缓存")
       .setDesc("导出到库根目录 universal-ui-translator-cache-export.json，可共享给其他用户")

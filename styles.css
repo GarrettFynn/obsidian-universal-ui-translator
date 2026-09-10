@@ -25,6 +25,11 @@
   min-height: 80px;
 }
 
+/* 状态栏显隐（官方审核禁内联 style 赋值，v1.1.3 起统一类切换） */
+.uut-hidden {
+  display: none;
+}
+
 /* v1.1.0 社区市场条目级「译」按钮：条目右上角小按钮，悬停显现 */
 .community-item {
   position: relative;
