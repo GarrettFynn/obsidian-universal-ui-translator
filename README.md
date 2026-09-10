@@ -51,7 +51,7 @@ Obsidian 社区插件生态以英文为主，汉化依赖插件作者自觉。�
 
 | 引擎 | 说明 |
 | --- | --- |
-| OpenAI 兼容接口 | 默认 `gpt-4o-mini`；支持自定义 Base URL（如接本地 Ollama：`http://localhost:11434/v1`） |
+| OpenAI 兼容接口 | **推荐 DeepSeek**：Base URL `https://api.deepseek.com` + 模型 `deepseek-v4.1-flash`，并打开「关闭思考模式」开关；默认 `gpt-4o-mini`；支持自定义 Base URL（如接本地 Ollama：`http://localhost:11434/v1`） |
 | DeepL | Free/Pro 端点自动识别（Free 版 Key 以 `:fx` 结尾）；免费档 50 万字符/月 |
 | Google Cloud Translation | API Key；语言覆盖最广；免费档 50 万字符/月 |
 | Azure Translator | Key + Region；免费档 200 万字符/月 |
@@ -127,7 +127,7 @@ The plugin ships **no translation engine or glossary of its own**. Translation q
 
 | Provider | Notes |
 | --- | --- |
-| OpenAI-compatible | Default `gpt-4o-mini`; custom Base URL supported (e.g. `http://localhost:11434/v1` for Ollama) |
+| OpenAI-compatible | Recommended: DeepSeek — Base URL `https://api.deepseek.com` + model `deepseek-v4.1-flash` with "关闭思考模式" toggled ON; default `gpt-4o-mini`; custom Base URL supported (e.g. `http://localhost:11434/v1` for Ollama) |
 | DeepL | Free/Pro endpoint auto-detected (free keys end with `:fx`); 500k chars/month free |
 | Google Cloud Translation | API key; broadest language coverage; 500k chars/month free |
 | Azure Translator | Key + region; 2M chars/month free |
