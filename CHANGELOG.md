@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.4] - 2026-09-10
+
+官方平台审核 1.1.3 反馈的收尾（零 Error 后的 Warning 清理）。
+
+### Fixed
+
+- manifest 描述补回结尾标点（平台规则：描述须以 `.`/`!`/`?` 结尾）
+- `setTimeout` 统一走 `window.setTimeout`（popout 兼容），对应测试切到 jsdom 环境
+- 构建依赖 `builtin-modules` 包替换为 Node 内置 `node:module`
+
 ## [1.1.3] - 2026-09-10
 
 官方社区平台（community.obsidian.md）自动审核首轮反馈修复。
@@ -89,6 +99,7 @@ First public release.
 - **Privacy by design**: no telemetry, no outbound calls except the configured translation endpoint; API keys encrypted with Electron `safeStorage` (`secrets.bin`, per-machine ciphertext)
 - Desktop only (`isDesktopOnly: true`); Obsidian 1.5.0+
 
+[1.1.4]: https://github.com/GarrettFynn/obsidian-universal-ui-translator/releases/tag/1.1.4
 [1.1.3]: https://github.com/GarrettFynn/obsidian-universal-ui-translator/releases/tag/1.1.3
 [1.1.2]: https://github.com/GarrettFynn/obsidian-universal-ui-translator/releases/tag/1.1.2
 [1.1.1]: https://github.com/GarrettFynn/obsidian-universal-ui-translator/releases/tag/1.1.1

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
 import { BatchTranslator } from "../src/core/batch-translator";
 import { TranslationProvider } from "../src/providers/base-provider";

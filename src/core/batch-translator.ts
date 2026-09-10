@@ -39,7 +39,7 @@ interface PendingEntry {
 export class BatchTranslator {
   private queue: PendingEntry[] = [];
   private byText = new Map<string, PendingEntry[]>();
-  private timer: ReturnType<typeof setTimeout> | null = null;
+  private timer: number | null = null;
   private flushing = false;
   private statSubmitted = 0;
   private statCompleted = 0;
@@ -81,11 +81,7 @@ export class BatchTranslator {
 
   private schedule(): void {
     if (this.timer) return;
-    // 官方 lint：popout 兼容须用 window.setTimeout；Node 测试环境无 window 时降级 globalThis
-    const host = (typeof window !== "undefined" ? window : globalThis) as {
-      setTimeout: (cb: () => void, ms: number) => ReturnType<typeof setTimeout>;
-    };
-    this.timer = host.setTimeout(() => {
+    this.timer = window.setTimeout(() => {
       this.timer = null;
       void this.flush();
     }, this.options.windowMs ?? 100);
