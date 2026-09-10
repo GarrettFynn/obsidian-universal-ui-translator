@@ -53,6 +53,21 @@ describe("DOMPatcher 集成", () => {
     expect(div.textContent).toBe("Open Settings");
   });
 
+  it(".prompt 层不译：快速切换器的文件名/库名属用户内容（v1.1.2 冒烟 S7 暴露）", async () => {
+    const p = new DOMPatcher(stubCoordinator(), format, () => false);
+    patchers.push(p);
+    p.activate();
+    const prompt = document.createElement("div");
+    prompt.className = "prompt";
+    const item = document.createElement("div");
+    item.className = "suggestion-item";
+    item.textContent = "My Daily Note";
+    prompt.appendChild(item);
+    document.body.appendChild(prompt);
+    await wait(300);
+    expect(item.textContent).toBe("My Daily Note");
+  });
+
   it("rescanAllText：已渲染未译节点重置记录后重新翻译（v1.1.0 配置热生效）", async () => {
     let broken = true;
     const coord = {

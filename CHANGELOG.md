@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.2] - 2026-09-10
+
+发布前全量冒烟（CDP 自动化，13 项）暴露的修复。
+
+### Fixed
+
+- **用户内容保护补强**：DOM 兜底通道不再进入 `.prompt` 弹窗层——快速切换器（Ctrl+O）的文件名、"打开库"的库名属用户内容，承诺不译（命令面板文本由命令通道覆盖，不受影响；副作用：插件黑名单在命令面板显示层现在严格生效，此前会被 DOM 兜底覆盖）
+
 ## [1.1.1] - 2026-09-10
 
 ### Fixed
@@ -63,6 +71,7 @@ First public release.
 - **Privacy by design**: no telemetry, no outbound calls except the configured translation endpoint; API keys encrypted with Electron `safeStorage` (`secrets.bin`, per-machine ciphertext)
 - Desktop only (`isDesktopOnly: true`); Obsidian 1.5.0+
 
+[1.1.2]: https://github.com/GarrettFynn/obsidian-universal-ui-translator/releases/tag/1.1.2
 [1.1.1]: https://github.com/GarrettFynn/obsidian-universal-ui-translator/releases/tag/1.1.1
 [1.1.0]: https://github.com/GarrettFynn/obsidian-universal-ui-translator/releases/tag/1.1.0
 [1.0.3]: https://github.com/GarrettFynn/obsidian-universal-ui-translator/releases/tag/1.0.3

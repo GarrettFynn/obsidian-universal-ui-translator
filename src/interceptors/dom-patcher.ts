@@ -26,6 +26,9 @@ const SKIP_SELECTORS = [
   '.workspace-leaf-content[data-type="tag"]',
   ".search-result-file-match",
   ".workspace-tab-header-inner-title",
+  // v1.1.2：.prompt 层（快速切换器/打开库等含文件名与库名的用户内容，承诺不译；
+  // 命令面板文本已由 CommandPatcher 覆盖，跳过不影响面板翻译，且黑名单语义不再被 DOM 兜底覆盖）
+  ".prompt",
   ".uut-original",
   "[data-uut]",
 ];

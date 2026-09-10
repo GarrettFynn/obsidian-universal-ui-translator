@@ -72,7 +72,8 @@ Obsidian 社区插件生态以英文为主，汉化依赖插件作者自觉。�
 
 - **不支持 Canvas/WebGL 渲染文本**（如 Excalidraw 画布、Graph 关系图）
 - **不支持 WebWorker / iframe 内文本**
-- **用户内容一律不译**：笔记编辑器、阅读视图、文件名（文件管理器与标签页标题）、大纲、标签、悬浮预览、嵌入笔记、搜索摘录
+- **用户内容一律不译**：笔记编辑器、阅读视图、文件名（文件管理器、标签页标题、快速切换器）、大纲、标签、悬浮预览、嵌入笔记、搜索摘录
+- **插件黑名单的边界**：命令/菜单/设置通道严格生效；DOM 兜底通道无法识别文本归属，黑名单插件的自定义视图仍可能被翻译（可用跳过正则补充）
 - **仅桌面端**（`isDesktopOnly: true`），本版本不支持移动端
 
 ### 开发
@@ -80,7 +81,7 @@ Obsidian 社区插件生态以英文为主，汉化依赖插件作者自觉。�
 ```bash
 npm install
 npm run build          # tsc 类型检查 + esbuild（刻意不做 minify）
-npm test               # 121 个单元与集成测试
+npm test               # 122 个单元与集成测试
 npm run test:coverage  # 核心模块行覆盖率 75.9%–100%
 ```
 
@@ -145,7 +146,8 @@ Typical cost: **zero** — the free tiers of all major providers cover UI-text v
 
 - **Canvas / WebGL rendered text** (e.g. Excalidraw canvas, Graph view) cannot be intercepted
 - **WebWorker / iframe content** is out of reach by design
-- **User content is never translated**: note editor, reading view, file names (explorer and tab titles), outline, tags, hover previews, embedded notes, and search excerpts
+- **User content is never translated**: note editor, reading view, file names (explorer, tab titles, quick switcher), outline, tags, hover previews, embedded notes, and search excerpts
+- **Blacklist boundary**: strictly honored in command/menu/settings channels; the DOM fallback cannot attribute text to a plugin, so a blacklisted plugin's custom views may still be translated (use skip-regexes as a supplement)
 - **Desktop only** (`isDesktopOnly: true`); mobile is not supported in this release
 
 ### Development
@@ -153,7 +155,7 @@ Typical cost: **zero** — the free tiers of all major providers cover UI-text v
 ```bash
 npm install
 npm run build          # tsc type-check + esbuild (deliberately not minified)
-npm test               # 121 unit & integration tests
+npm test               # 122 unit & integration tests
 npm run test:coverage  # core modules 75.9%–100% line coverage
 ```
 
