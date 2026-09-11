@@ -85,6 +85,29 @@ describe("TranslationCoordinator 数据流（设计文档 3.2）", () => {
     expect((provider as StubProvider).calls).toHaveLength(0);
   });
 
+  it("cacheEnabled=off 时不读不写缓存，直调 Provider（v1.1.5 死配置接线）", async () => {
+    const provider = new StubProvider();
+    const cache = new CacheManager(new MemoryIO(), "cache.json");
+    // 预置一条本可命中的缓存
+    const key = CacheManager.makeKey("Open Settings", "stub", "zh-CN", "");
+    cache.set(key, {
+      src: "Open Settings", tgt: "缓存译文", provider: "stub",
+      lang: "zh-CN", from: "", hits: 0, updatedAt: Date.now(),
+    });
+    const coordinator = new TranslationCoordinator(
+      new FilterEngine(),
+      cache,
+      () => provider,
+      { targetLang: "zh-CN", glossary: {}, isCacheEnabled: () => false }
+    );
+    // 缓存有货也不读：直调 Provider
+    expect(await coordinator.translate("Open Settings", CTX)).toBe("译:Open Settings");
+    expect(provider.calls).toEqual(["Open Settings"]);
+    // 新译文不写缓存
+    expect(await coordinator.translate("New Label", CTX)).toBe("译:New Label");
+    expect(cache.stats().size).toBe(1); // 仍只有预置那一条
+  });
+
   it("未命中走 Provider 并写缓存；第二次调用直接命中", async () => {
     const { coordinator, provider } = setup();
     expect(await coordinator.translate("Open Settings", CTX)).toBe("译:Open Settings");

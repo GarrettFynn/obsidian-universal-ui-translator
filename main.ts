@@ -30,6 +30,7 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
   private keyStorage!: KeyStorage;
   private coordinator!: TranslationCoordinator;
   private coordinatorOptions!: CoordinatorOptions;
+  private filter!: FilterEngine;
   private provider: TranslationProvider | null = null;
   private commandPatcher: CommandPatcher | null = null;
   private menuPatcher: MenuPatcher | null = null;
@@ -49,6 +50,22 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
       DEFAULT_SETTINGS,
       (await this.loadData()) as Partial<PluginSettings>
     );
+
+    // v1.1.5 一次性迁移：communityPlugins 在 <1.1.5 是从未生效的死配置且默认开，
+    // 旧 data.json 里的 true 不代表用户真实意图——统一置 false（仅迁移一次，之后尊重手动选择）
+    if (!this.settings.communityScopeMigratedV115) {
+      const wasOn = this.settings.scope.communityPlugins;
+      this.settings.scope.communityPlugins = false;
+      this.settings.communityScopeMigratedV115 = true;
+      await this.saveData(this.settings);
+      if (wasOn) {
+        new Notice(
+          "UUT v1.1.5：社区市场默认不再自动翻译（此前该开关实际未生效，滚动市场列表会持续消耗 API 额度）。" +
+            "逐条翻译请用市场条目上的「译」按钮（缓存命中零成本）；确需自动翻译请到 设置 → 作用域 手动打开",
+          12000
+        );
+      }
+    }
 
     // TextFileIO：真实环境由 app.vault.adapter 实现（B-1 抽象的实现点）
     this.io = {
@@ -101,7 +118,7 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
         }
       }, 30_000)
     );
-    const filter = new FilterEngine(this.settings.skipPatterns);
+    this.filter = new FilterEngine(this.settings.skipPatterns, this.settings.targetLang);
     this.provider = await createActiveProvider(this.settings, this.keyStorage, this.http);
     // 4.4.1：解密失败（secrets.bin 被同步到其他设备等）引导重新输入，不拿错误 Key 发请求
     if (this.keyStorage.hasDecryptFailures()) {
@@ -126,12 +143,14 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
       translateVia: (masked, context) => this.batcher.submit(masked, context),
       usageTracker: this.usageTracker,
       monthlyCharBudget: this.settings.monthlyCharBudget,
+      // v1.1.5：cacheEnabled 接线（此前为死配置，缓存读写始终生效）
+      isCacheEnabled: () => this.settings.cacheEnabled,
       // 4.2.2 错误分类：Key 失效（401/403）立即引导，不等熔断
       onAuthFailure: () =>
         new Notice("UUT：API Key 可能失效（401/403），请检查设置页 API 配置"),
     };
     this.coordinator = new TranslationCoordinator(
-      filter,
+      this.filter,
       this.cache,
       () => this.provider,
       this.coordinatorOptions,
@@ -219,6 +238,20 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     return this.usageTracker.monthChars();
   }
 
+  /** 缓存 Tab「立即落盘」（v1.1.5）：不等 30s/100 条/5 分钟保底策略，立即把内存缓存写入磁盘 */
+  async flushCacheNow(): Promise<{ ok: boolean; message: string }> {
+    try {
+      await this.cache.flush();
+      const at = this.cache.stats().lastFlushAt;
+      return {
+        ok: true,
+        message: `缓存已落盘（${at ? new Date(at).toLocaleTimeString() : "刚刚"}），共 ${this.cache.stats().size} 条`,
+      };
+    } catch (e) {
+      return { ok: false, message: `落盘失败：${String(e)}` };
+    }
+  }
+
   /** 导出缓存到库根目录（4.5 缓存 Tab；FR-12） */
   async exportCache(): Promise<{ ok: boolean; message: string }> {
     try {
@@ -275,6 +308,9 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     this.coordinatorOptions.targetLang = this.settings.targetLang;
     this.coordinatorOptions.glossary = this.settings.glossary;
     this.coordinatorOptions.monthlyCharBudget = this.settings.monthlyCharBudget;
+    // v1.1.5：过滤器热同步——目标语言（规则 5c 嵌套防线）与跳过正则（此前改完不生效，需重启）
+    this.filter.setTargetLang(this.settings.targetLang);
+    this.filter.setSkipPatterns(this.settings.skipPatterns);
     // v1.1.0：配置变更即重置熔断/负缓存与运行时译态，并全量重扫已渲染界面——修复"改完配置要重启才生效"
     this.coordinator.resetFailures();
     this.commandPatcher?.resetRuntimeTranslations();
@@ -299,7 +335,12 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
       this.commandPatcher = new CommandPatcher(
         this.app,
         this.coordinator,
-        (pluginId) => this.settings.scope.pluginBlacklist.includes(pluginId),
+        // v1.1.5：scope 开关接线（此前 core/communityPlugins 为死配置）——
+        // 黑名单优先；communityPlugins=off 排除社区插件命令；core=off 排除核心命令
+        (pluginId) =>
+          this.settings.scope.pluginBlacklist.includes(pluginId) ||
+          (!this.settings.scope.communityPlugins && pluginId !== "core") ||
+          (!this.settings.scope.core && pluginId === "core"),
         debug,
         format // R-13：命令面板双语括注（formatWriteBack 闭包读取实时 displayMode）
       );
@@ -320,7 +361,14 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     }
     // v1.1.0：社区市场条目级「译」按钮（旧 data.json 无此键，!== false 视为开）
     if (on.marketplace !== false && !this.marketplacePatcher) {
-      this.marketplacePatcher = new MarketplacePatcher(this.coordinator, format, debug, this.app);
+      this.marketplacePatcher = new MarketplacePatcher(
+        this.coordinator,
+        format,
+        debug,
+        this.app,
+        // v1.1.5 嵌套乱码修复：条目回写登记到 DOMPatcher 去重账本（闭包转发，domPatcher 可能后建）
+        (node) => this.domPatcher?.markWrittenBack(node)
+      );
       this.marketplacePatcher.activate();
     }
     // v1.1.1：社区市场浏览器是 window.open 弹出的独立窗口（CDP 实测），
@@ -371,7 +419,9 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
   private adoptPopupWindow(win: Window): void {
     const doc = win.document;
     if (!doc?.body) return;
-    this.domPatcher?.adoptDocument(doc);
+    // v1.1.5：市场弹窗默认不再自动全量翻译（滚动列表即持续消耗 API，用户额度事故根因）——
+    // 仅 scope.communityPlugins 显式开启时纳管 DOM 兜底；条目「译」按钮始终注入（零自动成本）
+    if (this.settings.scope.communityPlugins) this.domPatcher?.adoptDocument(doc);
     this.marketplacePatcher?.adoptDocument(doc);
   }
 

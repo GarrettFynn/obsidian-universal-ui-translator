@@ -44,6 +44,9 @@ export interface PluginSettings {
   skipPatterns: string[];
   scope: {
     core: boolean;
+    /** v1.1.5 起默认关闭：开启后社区市场浏览器可见条目会被自动翻译（滚动即持续消耗 API）；
+     *  推荐改用条目「译」按钮按需翻译。控制面：社区插件命令通道 + 市场弹窗自动翻译
+     *  （Setting/DOM 通道无法归因插件归属，不受此开关控制，设置页如实标注） */
     communityPlugins: boolean;
     pluginWhitelist: string[];
     pluginBlacklist: string[];
@@ -56,6 +59,9 @@ export interface PluginSettings {
     /** v1.1.0 社区市场条目级「译」按钮；旧 data.json 无此键，读取处按 !== false 兜底（默认开） */
     marketplace?: boolean;
   };
+  /** v1.1.5 一次性迁移标记：communityPlugins 在 <1.1.5 从未生效（死配置），旧值 true 不代表
+   *  用户真实意图，升级时统一置 false 并写此标记（仅迁移一次，之后尊重用户手动选择） */
+  communityScopeMigratedV115?: boolean;
   debugMode: boolean;
 }
 
@@ -76,7 +82,8 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   skipPatterns: [],
   scope: {
     core: true,
-    communityPlugins: true,
+    // v1.1.5：默认关闭（此前为死配置且默认开——市场浏览器滚动即持续自动送译烧额度）
+    communityPlugins: false,
     pluginWhitelist: [],
     // 默认排除本插件自身（自我翻译防护，设计文档 4.4）
     pluginBlacklist: ["universal-ui-translator"],

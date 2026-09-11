@@ -227,4 +227,41 @@ describe("DOMPatcher 集成", () => {
       delete proto.checkVisibility;
     }
   });
+
+  it("v1.1.5：回写去重统一 trim 口径——带前后空白的文本回写后不再重送（嵌套乱码回归）", async () => {
+    const coord = stubCoordinator();
+    const p = new DOMPatcher(coord, format, () => false);
+    patchers.push(p);
+    p.activate();
+    const div = document.createElement("div");
+    div.textContent = "  Padded Label  "; // 保留前后空白：旧口径（存未 trim 值）必然误判重送
+    document.body.appendChild(div);
+    await wait(300);
+    expect(div.textContent).toBe("  译:Padded Label  ");
+    const callsAfterWrite = (coord as unknown as CoordStub).calls.length;
+    await wait(300);
+    // 回写产物（含空白）不再被当成新内容重送
+    expect((coord as unknown as CoordStub).calls.length).toBe(callsAfterWrite);
+    expect(div.textContent).toBe("  译:Padded Label  ");
+  });
+
+  it("v1.1.5：markWrittenBack 登记后，外部通道（市场「译」按钮）的回写不被重送", async () => {
+    const coord = stubCoordinator();
+    const p = new DOMPatcher(coord, format, () => false);
+    patchers.push(p);
+    p.activate();
+    const div = document.createElement("div");
+    div.textContent = "Plugin Desc";
+    document.body.appendChild(div);
+    await wait(300);
+    expect(div.textContent).toBe("译:Plugin Desc");
+    const before = (coord as unknown as CoordStub).calls.length;
+    // 模拟 MarketplacePatcher.translateItem 的跨通道回写：外部直改 nodeValue 并登记
+    const node = div.firstChild as Text;
+    node.nodeValue = "译:Plugin Desc (Plugin Desc)";
+    p.markWrittenBack(node);
+    await wait(300);
+    expect((coord as unknown as CoordStub).calls.length).toBe(before); // 双语产物未重送
+    expect(div.textContent).toBe("译:Plugin Desc (Plugin Desc)");
+  });
 });

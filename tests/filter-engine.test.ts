@@ -16,6 +16,13 @@ describe("FilterEngine.shouldTranslate 规则链", () => {
     expect(fe.shouldTranslate("A")).toBe(false);
   });
 
+  it("规则 2b：长度 > 2000 拒绝（v1.1.5 成本与缓存体积硬上限）", () => {
+    expect(fe.shouldTranslate("x".repeat(2000))).toBe(true); // 边界内放行
+    expect(fe.shouldTranslate("x".repeat(2001))).toBe(false);
+    // 失控嵌套文本形态（数 MB 级）必然命中此闸
+    expect(fe.shouldTranslate("TaskNotes 有一个可选的 (".repeat(5000))).toBe(false);
+  });
+
   it("规则 3：文件路径拒绝（设计文档测试用例 4）", () => {
     expect(fe.shouldTranslate("C:\\Users\\foo\\bar")).toBe(false);
     expect(fe.shouldTranslate("/usr/local/bin")).toBe(false);
@@ -52,6 +59,32 @@ describe("FilterEngine.shouldTranslate 规则链", () => {
     // 英文主导的混合文本仍放行送译
     expect(fe.shouldTranslate("Auto-save 自动保存")).toBe(true);
     expect(fe.shouldTranslate("Open Settings")).toBe(true);
+  });
+
+  it("规则 5c：zh 目标语言下含 ≥2 个汉字即拒绝（v1.1.5 嵌套乱码防线）", () => {
+    const zh = new FilterEngine([], "zh-CN");
+    // 用户报告的乱码样本形态：双语回写产物拉丁字母多于汉字，可绕过 5b——5c 从结构上拦截
+    expect(
+      zh.shouldTranslate(
+        "TaskNotes 有一个可选的 HTTP API。有一个 (TaskNotes has an optional HTTP API. There's a)"
+      )
+    ).toBe(false);
+    // 5b 放行的英文主导混合文本在 zh 目标下同样拦截
+    expect(zh.shouldTranslate("Auto-save 自动保存")).toBe(false);
+    // 纯英文原文照常放行
+    expect(zh.shouldTranslate("Open Settings")).toBe(true);
+    expect(zh.shouldTranslate("Best plugin ever")).toBe(true);
+  });
+
+  it("规则 5c：非 zh 目标不启用（保持 5b 原行为）；setTargetLang 热切换生效", () => {
+    const en = new FilterEngine([], "en");
+    expect(en.shouldTranslate("Auto-save 自动保存")).toBe(true); // 5b 放行
+    expect(en.shouldTranslate("重新加载 Obsidian（不保存当前编辑内容）")).toBe(false); // 5b 拦截
+    // 热切换到 zh 后 5c 立即生效（配置热生效链路）
+    en.setTargetLang("zh-Hant");
+    expect(en.shouldTranslate("Auto-save 自动保存")).toBe(false);
+    en.setTargetLang("ja");
+    expect(en.shouldTranslate("Auto-save 自动保存")).toBe(true);
   });
 });
 

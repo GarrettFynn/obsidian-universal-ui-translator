@@ -11,12 +11,17 @@ export interface CacheStats {
 }
 
 const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
+/** v1.1.5 单条目字符上限（src+tgt）：UI 文本远低于 2KB，失控嵌套产物单条可达数 MB（540MB 缓存事故防线） */
+const MAX_ENTRY_CHARS = 4000;
+/** v1.1.5 磁盘文件总字节预算（近似）：条数上限之外的硬顶，超出按 updatedAt 从旧到新淘汰 */
+const DISK_MAX_BYTES = 8 * 1024 * 1024;
 
 /**
  * 缓存管理（设计文档 4.2.3）
  * - 键：sha256(原文 + providerId + targetLang + model) 取前 16 位十六进制，
  *   多引擎 / 多语言 / 多模型互不污染；Node crypto 同步计算，不走异步 crypto.subtle
- * - 内存 Map + LRU（默认上限 5000）；磁盘 JSON（默认上限 20000，超限按 updatedAt 最旧淘汰）
+ * - 内存 Map + LRU（默认上限 5000）；磁盘 JSON（默认上限 20000 条 + 8MB 字节硬顶，超限按 updatedAt 最旧淘汰）
+ * - v1.1.5 体积防护：单条目 src+tgt 超 4000 字符拒绝写入 / load 时剔除（嵌套失控产物曾达 540MB）
  * - 版本维度：get 传入 currentFrom（pluginId@version / core@appVersion），不符即惰性失效
  * - 90 天未命中的条目在 load 时清理
  * - 落盘策略（每 30s 或累计 100 条、onunload 强制 flush）由装配层驱动，
@@ -76,7 +81,8 @@ export class CacheManager {
     }
     const cutoff = this.now() - NINETY_DAYS_MS;
     const entries = Object.entries(file.entries ?? {})
-      .filter(([, e]) => e.updatedAt >= cutoff)
+      // v1.1.5：超大条目在 load 时剔除——旧版本嵌套失控产物的垃圾条目由此自动自愈（flush 后文件即瘦身）
+      .filter(([, e]) => e.updatedAt >= cutoff && e.src.length + e.tgt.length <= MAX_ENTRY_CHARS)
       .sort(([, a], [, b]) => b.updatedAt - a.updatedAt)
       .slice(0, this.diskMaxEntries);
     for (const [key, e] of entries) {
@@ -120,21 +126,31 @@ export class CacheManager {
   }
 
   set(key: string, entry: CacheEntry): void {
+    // v1.1.5：超大条目拒绝入缓存（超长文本由 FilterEngine 规则 2b 前置拒译，此处为最后兜底）
+    if (entry.src.length + entry.tgt.length > MAX_ENTRY_CHARS) return;
     this.mem.delete(key);
     this.mem.set(key, entry);
     this.dirtyCount++;
     this.evictIfNeeded();
   }
 
-  /** 批量落盘：内存视图（含 load 读入的磁盘条目）按磁盘上限截断后写 JSON */
+  /** 批量落盘：内存视图（含 load 读入的磁盘条目）按条数与字节双上限截断后写 JSON */
   async flush(): Promise<void> {
     await this.load();
-    const all = [...this.mem.entries()]
+    const sorted = [...this.mem.entries()]
       .sort(([, a], [, b]) => b.updatedAt - a.updatedAt)
       .slice(0, this.diskMaxEntries);
+    // v1.1.5 字节硬顶：条数之外再按体积截断（key+src+tgt+from+JSON 结构开销近似 128B/条）
+    let bytes = 0;
+    const kept: Record<string, CacheEntry> = {};
+    for (const [key, e] of sorted) {
+      bytes += key.length + e.src.length + e.tgt.length + e.from.length + 128;
+      if (bytes > DISK_MAX_BYTES) break;
+      kept[key] = e;
+    }
     const file: CacheFile = {
       schemaVersion: CACHE_SCHEMA_VERSION,
-      entries: Object.fromEntries(all),
+      entries: kept,
     };
     await this.io.write(this.filePath, JSON.stringify(file, null, 2));
     this.dirtyCount = 0;

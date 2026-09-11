@@ -18,6 +18,24 @@ function stubCoordinator(): TranslationCoordinator {
   return { translate: async (t: string) => `译:${t}` } as unknown as TranslationCoordinator;
 }
 
+/** v1.1.5 详情面板测试用 DOM：.mod-community-plugin 弹窗 = .modal-content > (.modal-sidebar + 详情区) */
+function makeModal(detailHtml: string): { modal: HTMLElement; detail: HTMLElement; sidebar: HTMLElement } {
+  const modal = document.createElement("div");
+  modal.className = "modal mod-community-modal mod-community-plugin";
+  const content = document.createElement("div");
+  content.className = "modal-content";
+  const sidebar = document.createElement("div");
+  sidebar.className = "modal-sidebar";
+  sidebar.textContent = "列";
+  const detail = document.createElement("div");
+  detail.innerHTML = detailHtml;
+  content.appendChild(sidebar);
+  content.appendChild(detail);
+  modal.appendChild(content);
+  document.body.appendChild(modal);
+  return { modal, detail, sidebar };
+}
+
 const tick = () => new Promise((r) => setTimeout(r, 10));
 
 describe("MarketplacePatcher（v1.1.0 社区市场条目级「译」按钮）", () => {
@@ -68,5 +86,89 @@ describe("MarketplacePatcher（v1.1.0 社区市场条目级「译」按钮）", 
     expect(doc.querySelector(".uut-mkt-btn")).toBeTruthy();
     p.adoptDocument(doc); // 幂等：重复纳管不重复注入
     expect(doc.querySelectorAll(".uut-mkt-btn")).toHaveLength(1);
+  });
+
+  it("v1.1.5 嵌套修复：回写打 data-uut 标记 + 登记 onWriteBack；重复点击零送译；deactivate 清标", async () => {
+    const calls: string[] = [];
+    const coord = {
+      translate: async (t: string) => {
+        calls.push(t);
+        return `译:${t}`;
+      },
+    } as unknown as TranslationCoordinator;
+    const writtenBack: string[] = [];
+    const p = new MarketplacePatcher(
+      coord,
+      (t) => t,
+      () => {},
+      undefined,
+      (n: Text) => writtenBack.push(n.nodeValue ?? "")
+    );
+    patchers.push(p);
+    const item = makeItem("Super Plugin");
+    p.activate();
+    const btn = item.querySelector(":scope > .uut-mkt-btn") as HTMLButtonElement;
+    btn.click();
+    await tick();
+    expect(item.textContent).toContain("译:Super Plugin");
+    // 已译节点父元素打标；onWriteBack 逐节点登记（供 DOMPatcher 去重账本）
+    const nameEl = item.querySelector(".community-item-name") as HTMLElement;
+    expect(nameEl.getAttribute("data-uut")).toBe("mkt");
+    expect(writtenBack.some((v) => v.includes("译:Super Plugin"))).toBe(true);
+    // 重复点击：已译节点被跳过，零送译
+    const callCount = calls.length;
+    btn.click();
+    await tick();
+    expect(calls.length).toBe(callCount);
+    // deactivate 清除本通道标记（不影响其他 [data-uut] 用途）
+    p.deactivate();
+    expect(item.querySelector('[data-uut="mkt"]')).toBeNull();
+  });
+
+  it("v1.1.5：详情面板注入「译」按钮——点击翻译 README 全文；sidebar 不受影响；代码块跳过", async () => {
+    const calls: string[] = [];
+    const coord = {
+      translate: async (t: string) => {
+        calls.push(t);
+        return `译:${t}`;
+      },
+    } as unknown as TranslationCoordinator;
+    const p = new MarketplacePatcher(coord, (t) => t);
+    patchers.push(p);
+    const { detail, sidebar } = makeModal(
+      "<h2>Obsidian Git Plugin</h2>" +
+        "<p>A powerful community plugin that brings Git integration right into your vault.</p>" +
+        '<pre>git commit -m "do not translate code"</pre>'
+    );
+    p.activate();
+    const btn = detail.querySelector(":scope > .uut-mkt-detail-btn") as HTMLButtonElement | null;
+    expect(btn).toBeTruthy();
+    expect(btn!.getAttribute("data-no-translate")).toBe("true");
+    expect(sidebar.querySelector(".uut-mkt-detail-btn")).toBeNull(); // 按钮只在详情区
+    btn!.click();
+    await tick();
+    expect(detail.textContent).toContain("译:A powerful community plugin");
+    expect(detail.textContent).toContain("译:Obsidian Git Plugin");
+    // 代码块不送译
+    expect(calls.some((t) => t.includes("git commit"))).toBe(false);
+    expect(detail.querySelector("pre")!.textContent).toBe('git commit -m "do not translate code"');
+    // 侧栏 untouched（stub 不设过滤器，若被波及会变"译:"）
+    expect(sidebar.textContent).toBe("列");
+  });
+
+  it("v1.1.5：详情区随选中插件重渲染后，按钮经观察器重注入且可翻译新内容", async () => {
+    const p = new MarketplacePatcher(stubCoordinator(), (t) => t);
+    patchers.push(p);
+    const { detail } = makeModal("<p>First plugin description text.</p>");
+    p.activate();
+    expect(detail.querySelector(":scope > .uut-mkt-detail-btn")).toBeTruthy();
+    // 模拟切换选中插件：详情区整棵重渲染（旧按钮与已译标记随旧节点销毁）
+    detail.innerHTML = "<p>Second plugin README content here.</p>";
+    await tick(); // MutationObserver → injectButtons 重注入
+    const btn = detail.querySelector(":scope > .uut-mkt-detail-btn") as HTMLButtonElement | null;
+    expect(btn).toBeTruthy();
+    btn!.click();
+    await tick();
+    expect(detail.textContent).toContain("译:Second plugin README content here.");
   });
 });

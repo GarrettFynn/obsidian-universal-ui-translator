@@ -3,18 +3,33 @@
  * 规则按优先级执行，命中即决定放行或拒绝：
  * 1 用户自定义正则 → 拒绝
  * 2 纯数字 / 纯符号 / 长度 < 2 → 拒绝
+ * 2b 长度 > MAX_TRANSLATABLE_CHARS（2000）→ 拒绝（v1.1.5：UI 文本不会超此长度；
+ *    失控嵌套文本可达数 MB，单请求成本与缓存体积必须有硬上限）
  * 3 文件路径 → 拒绝
  * 4 URL / URI → 拒绝
  * 5 不含连续 2 个拉丁字母 → 拒绝
  * 5b CJK 表意字符数 ≥ 拉丁字母数 → 拒绝（R-06：已本地化混合文本，送译只返回原文）
+ * 5c v1.1.5 嵌套乱码防线（目标语言为 zh 系时）：文本含 ≥2 个 CJK 表意字符即拒绝——
+ *    UI 原文为英文，含中文说明是双语回写产物或用户内容，送译只会被 LLM 嵌套再翻
  * 6 含占位符 → 放行，占位符 token 化保护后送译，译后校验（见静态方法组）
  * 7 默认 → 放行
  */
 export class FilterEngine {
-  private userPatterns: RegExp[] = [];
+  /** 单条可送译文本长度上限（字符）；超出拒绝送译（成本与缓存硬上限，v1.1.5） */
+  static readonly MAX_TRANSLATABLE_CHARS = 2000;
 
-  constructor(skipPatterns: string[] = []) {
+  private userPatterns: RegExp[] = [];
+  /** 目标语言（规则 5c 用；小写归一，缺省为空串 = 不启用 5c） */
+  private targetLang = "";
+
+  constructor(skipPatterns: string[] = [], targetLang = "") {
     this.setSkipPatterns(skipPatterns);
+    this.setTargetLang(targetLang);
+  }
+
+  /** v1.1.5：目标语言热同步（refreshRuntime 时调用） */
+  setTargetLang(lang: string): void {
+    this.targetLang = lang.trim().toLowerCase();
   }
 
   setSkipPatterns(patterns: string[]): void {
@@ -36,6 +51,8 @@ export class FilterEngine {
     // 规则 2：长度 < 2 / 纯数字 / 纯符号
     if (t.length < 2) return false;
     if (/^[\d\s\p{P}\p{S}]+$/u.test(t)) return false;
+    // 规则 2b：超长文本拒绝（v1.1.5：失控嵌套文本曾把缓存撑到数百 MB、单请求成本失控）
+    if (t.length > FilterEngine.MAX_TRANSLATABLE_CHARS) return false;
     // 规则 3：文件路径（盘符或斜杠开头 / 含路径分隔符 / 文件名.扩展名）
     if (/^([a-zA-Z]:[\\/]|[\\/]|~[\\/]|\.{1,2}[\\/])/.test(t)) return false;
     if (/^[\w.-]+([\\/][\w .-]+)+$/.test(t)) return false;
@@ -48,6 +65,9 @@ export class FilterEngine {
     const latinCount = (t.match(/[A-Za-z]/g) ?? []).length;
     const cjkCount = (t.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g) ?? []).length;
     if (cjkCount >= 2 && cjkCount >= latinCount) return false;
+    // 规则 5c（v1.1.5）：目标语言为 zh 系时，含 ≥2 个 CJK 字符即拒绝——
+    // 双语回写产物"译文 (原文)"的拉丁字母往往多于汉字、可绕过 5b，此规则从结构上杜绝嵌套再翻
+    if (this.targetLang.startsWith("zh") && cjkCount >= 2) return false;
     // 规则 7：默认放行
     return true;
   }

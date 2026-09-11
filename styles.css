@@ -54,3 +54,34 @@
 .uut-mkt-btn[disabled] {
   cursor: default;
 }
+
+/* v1.1.5 市场详情面板「译」按钮：置顶右侧（详情容器随选中插件重渲染，按钮由观察器重注入） */
+.uut-mkt-detail-btn {
+  float: right;
+  margin: 4px;
+  padding: 1px 7px;
+  font-size: 11px;
+  border-radius: 4px;
+  opacity: 0.6;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.uut-mkt-detail-btn:hover {
+  opacity: 1;
+}
+
+.uut-mkt-detail-btn[disabled] {
+  cursor: default;
+}
+
+/* v1.1.5 作用域页推荐用法说明块（风险标注诉求） */
+.uut-scope-note {
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}

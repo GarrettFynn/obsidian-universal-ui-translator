@@ -26,6 +26,8 @@ export interface CoordinatorOptions {
   monthlyCharBudget?: number | null;
   /** Key 失效（401/403）提示回调（4.2.2 错误分类；一次会话只提示一次） */
   onAuthFailure?: () => void;
+  /** 缓存总开关（4.4 cacheEnabled，v1.1.5 接线——此前为死配置）；缺省视为开启 */
+  isCacheEnabled?: () => boolean;
 }
 
 /**
@@ -58,11 +60,12 @@ export class TranslationCoordinator {
     // 3. Provider 未配置：回退原文（4.4.2 未配置行为）
     const provider = this.getProvider();
     if (!provider) return text;
-    // 4. 缓存（键含 providerId + targetLang + model 维度，4.2.3）
+    // 4. 缓存（键含 providerId + targetLang + model 维度，4.2.3；v1.1.5 cacheEnabled 接线）
+    const cacheOn = this.options.isCacheEnabled?.() ?? true;
     const model = this.options.getModelId?.() ?? "";
     const from = this.options.resolveFrom?.(ctx.pluginId) ?? "";
     const key = CacheManager.makeKey(text, provider.id, this.options.targetLang, model);
-    const hit = this.cache.get(key, from || undefined);
+    const hit = cacheOn ? this.cache.get(key, from || undefined) : null;
     if (hit) return hit.tgt;
     // 4.5 月度预算熔断：超限暂停送译、回退原文
     if (
@@ -88,15 +91,17 @@ export class TranslationCoordinator {
       if (!FilterEngine.placeholdersIntact(text, restored)) {
         return text; // 占位符被改写：丢弃译文、回退原文、不写缓存
       }
-      this.cache.set(key, {
-        src: text,
-        tgt: restored,
-        provider: provider.id,
-        lang: this.options.targetLang,
-        from,
-        hits: 0,
-        updatedAt: this.now(),
-      });
+      if (cacheOn) {
+        this.cache.set(key, {
+          src: text,
+          tgt: restored,
+          provider: provider.id,
+          lang: this.options.targetLang,
+          from,
+          hits: 0,
+          updatedAt: this.now(),
+        });
+      }
       this.consecutiveFailures = 0;
       return restored;
     } catch (e) {

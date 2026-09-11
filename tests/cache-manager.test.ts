@@ -100,6 +100,56 @@ describe("CacheManager", () => {
     expect(new Set(Object.keys(file.entries))).toEqual(new Set(["k2", "k3"]));
   });
 
+  it("v1.1.5 体积防护：单条目 src+tgt 超 4000 字符拒绝写入（嵌套失控产物兜底）", () => {
+    const cm = new CacheManager(new MemoryIO(), PATH);
+    const huge = "译：( nested".repeat(300); // > 4000 字符，模拟嵌套乱码条目
+    cm.set("huge", { ...entry("x".repeat(3000)), tgt: huge });
+    expect(cm.get("huge")).toBeNull(); // 未入缓存
+    expect(cm.pendingWrites).toBe(0);
+    // 边界内正常写入
+    cm.set("ok", entry("Normal Label"));
+    expect(cm.get("ok")?.src).toBe("Normal Label");
+  });
+
+  it("v1.1.5 体积防护：load 时剔除超大条目（旧版垃圾缓存自动自愈）", async () => {
+    const io = new MemoryIO();
+    const t0 = Date.now();
+    io.files.set(
+      PATH,
+      JSON.stringify({
+        schemaVersion: 1,
+        entries: {
+          good: entry("Good Label", "p@1", t0),
+          garbage: { ...entry("x".repeat(3000), "p@1", t0), tgt: "译：( ".repeat(2000) },
+        },
+      })
+    );
+    const cm = new CacheManager(io, PATH);
+    await cm.load();
+    expect(cm.get("good")?.src).toBe("Good Label");
+    expect(cm.get("garbage")).toBeNull();
+  });
+
+  it("v1.1.5 体积防护：flush 按 8MB 字节硬顶截断（条数上限之外的第二道闸）", async () => {
+    const io = new MemoryIO();
+    const cm = new CacheManager(io, PATH, 200000, 200000); // 放开条数上限，专测字节闸
+    // 每条约 3.2KB（src 1500 + tgt 1500 + 结构开销），8MB 约容 2500 条；写 3000 条必截断
+    for (let i = 0; i < 3000; i++) {
+      cm.set(`k${String(i).padStart(5, "0")}`, {
+        ...entry("s".repeat(1500), "p@1", 1000 + i),
+        tgt: "t".repeat(1500),
+      });
+    }
+    await cm.flush();
+    const file = JSON.parse(io.files.get(PATH)!) as { entries: Record<string, { updatedAt: number }> };
+    const keys = Object.keys(file.entries);
+    expect(keys.length).toBeLessThan(3000);
+    expect(keys.length).toBeGreaterThan(2000); // 确实容下了数千条（非误杀）
+    // 保留的是 updatedAt 最新的一批（最旧的 k00000 被淘汰）
+    expect(file.entries["k02999"]).toBeTruthy();
+    expect(file.entries["k00000"]).toBeUndefined();
+  });
+
   it("损坏缓存文件视为空缓存，不抛异常", async () => {
     const io = new MemoryIO();
     io.files.set(PATH, "{not valid json");

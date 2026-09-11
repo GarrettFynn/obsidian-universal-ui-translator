@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.5] - 2026-09-11
+
+用户反馈修复：双语模式下译文被反复嵌套再翻（`译文 (译文 (…))` 乱码）；社区市场页面常驻持续消耗 API 额度；设置项风险标注缺失。
+
+### Fixed
+
+- **嵌套重复翻译（三层防线）**：①「译」按钮回写经 `markWrittenBack()` 登记到 DOM 兜底通道去重账本，跨通道回写不再被当成新内容重送；② DOM 兜底通道去重记录统一 trim 口径（含前后空白的回写不再误判重送）；③ 过滤器新增规则 5c——目标语言为中文时文本含 ≥2 个汉字即拒绝送译，双语回写产物从结构上不可能再进入翻译管线
+- **缓存体积失控**（嵌套乱码把 `translation-cache.json` 撑到数百 MB、git 推送被远端单文件上限拒绝）：过滤器规则 2b 拒译超 2000 字符文本（单请求成本硬上限）；缓存单条目 src+tgt 超 4000 字符拒绝写入、load 时自动剔除旧版垃圾条目；落盘在 20000 条上限外新增 8MB 字节硬顶
+- **额度消耗**：`scope.core` / `scope.communityPlugins` / `cacheEnabled` 三个此前从未生效的死开关完成接线；市场弹窗默认不再自动全量翻译（滚动列表即持续送译的根因切除），条目「译」按钮始终可用（零自动消耗）
+- 过滤器在配置变更时热同步目标语言与跳过正则（此前改完需重启才生效）
+
+### Changed
+
+- `scope.communityPlugins` 默认关闭；因其在旧版本从未生效，升级时对所有用户执行一次性迁移置关（之后尊重手动选择），并 Notice 告知
+- 「译」按钮翻译过的条目打 `data-uut="mkt"` 标记：DOM 兜底通道跳过、重复点击零送译；插件卸载时清除标记
+
+### Added
+
+- 设置面板逐项风险与费用标注（基准：DeepSeek V4 Flash 峰时价 输入 $0.44 / 输出 $1.32 每百万 tokens）；API 分页用量统计附实时费用折算；月度预算标注为防烧额度硬闸门
+- 缓存分页新增「启用本地缓存」开关（原死配置接线）与「立即落盘」按钮（不等自动落盘策略，手动关闭崩溃丢失窗口）
+- 社区市场**详情面板**（插件 README 全文——绝大多数待读英文内容所在）注入「译」按钮：点击并行翻译当前选中插件的完整介绍，代码块不译；切换插件详情重渲染后按钮自动重注入
+
 ## [1.1.4] - 2026-09-10
 
 官方平台审核 1.1.3 反馈的收尾（零 Error 后的 Warning 清理）。

@@ -40,6 +40,9 @@ const SKIP_SELECTORS = [
  * - 去重即回写循环抑制：WeakMap<Node, string> 按"节点 → 上次处理文本值"去重——
  *   MutationObserver 回调是微任务，writing 标志在异步回写时已复位、不可靠；
  *   真正的抑制机制是回写后更新去重记录（新文本不再送译），writing 仅作同步辅助
+ * - v1.1.5：去重记录统一存 trim 后的文本值（与 enqueue 比较口径一致，含前后空白的
+ *   回写不再被误判为新内容）；markWrittenBack() 供 MarketplacePatcher 等外部通道
+ *   登记其回写——跨通道回写不再被当成外部变化重送（嵌套乱码修复，防线一）
  * - requestIdleCallback（超时 100ms）空闲调度；单帧预算 5ms，超出入队延后
  * - 不可见元素（checkVisibility() === false）跳过，近似非活动标签页暂停
  * - 双语模式在状态栏降级为仅译文 + 父级 tooltip（5.1 空间受限策略）
@@ -286,7 +289,15 @@ export class DOMPatcher {
     } finally {
       this.writing = false;
     }
-    // 主回写循环抑制：更新去重记录，回写产生的新文本不再送译
-    this.processed.set(node, node.nodeValue ?? "");
+    // 主回写循环抑制：更新去重记录（统一 trim 口径，v1.1.5），回写产生的新文本不再送译
+    this.processed.set(node, (node.nodeValue ?? "").trim());
+  }
+
+  /**
+   * v1.1.5：外部通道（MarketplacePatcher 条目「译」）回写后登记——
+   * 否则本通道的 MutationObserver 会把对方回写当成外部新内容再次送译（嵌套乱码根因之一）
+   */
+  markWrittenBack(node: Text): void {
+    this.processed.set(node, (node.nodeValue ?? "").trim());
   }
 }
