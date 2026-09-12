@@ -148,6 +148,11 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
       // 4.2.2 错误分类：Key 失效（401/403）立即引导，不等熔断
       onAuthFailure: () =>
         new Notice("UUT：API Key 可能失效（401/403），请检查设置页 API 配置"),
+      // v1.1.8：预算超限提示（types.ts 承诺的"超限提示"此前未实现，纯静默 = 用户实测"按钮失效"头号嫌疑）
+      onBudgetExceeded: () =>
+        new Notice(
+          "UUT：本月字符预算已用完，翻译已暂停并回退原文；如需继续请到 设置页 → API 配置 调整月度预算"
+        ),
     };
     this.coordinator = new TranslationCoordinator(
       this.filter,

@@ -55,6 +55,12 @@
   cursor: default;
 }
 
+/* v1.1.8：「译」按钮失败态——翻译被阻断/请求失败时不再静默显示 ✓（官方审核规范：颜色用主题变量） */
+.uut-mkt-btn-failed {
+  color: var(--text-error);
+  opacity: 1;
+}
+
 /* v1.1.5 市场详情面板「译」按钮：置顶右侧（详情容器随选中插件重渲染，按钮由观察器重注入） */
 .uut-mkt-detail-btn {
   float: right;

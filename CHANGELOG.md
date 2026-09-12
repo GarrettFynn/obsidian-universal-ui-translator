@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.8] - 2026-09-12
+
+用户反馈修复：市场「译」按钮（列表条目 + README 详情）间歇性"点击无反应"——所有失败路径被静默回退为原文且按钮一律显示 ✓，失败被伪装成成功。
+
+### Fixed
+
+- **「译」按钮失败静默化（根因修复）**：协调层新增结果分类（`translateWithOutcome`：translated / cache / glossary / filtered / no-provider / budget / circuit / negative-cache / failed），点击后按真实结果反馈——有待译节点但零回写时按钮显示红色 × 并 Notice 说明具体原因（预算超限 / 熔断中 / 未配置引擎 / 请求失败摘要），3 秒后恢复可重试；无可译节点（已译/被过滤）仍显示 ✓。其他四个通道经 `translate()` 薄封装，行为零变化
+- **月度预算超限纯静默**（types.ts 承诺的"超限提示"此前未实现）：超限时每会话 Notice 提示一次，告知到设置页调整预算
+- **回写竞态**：「译」按钮回写前补 `isConnected` 存活检查（设计文档 5.2 此前在 DOM 兜底通道有、市场通道漏实现）——详情区频繁重渲染时译文曾写到已销毁节点上不可见；全部游离且根容器仍存活时自动重试一次（译文已入缓存，零 API 成本秒出）
+- **手动点击绕过 5 分钟负缓存**（显式重试意图；熔断与预算保护不动）；coordinator 意外抛错时按钮不再永久卡在「…」
+- **同父兄弟节点锁定**（二次复查发现）：已译标记此前"一回写即打父元素"——`<p>文字1<a>链接</a> 文字2</p>` 这类同父多文本节点结构下，部分节点失败时父元素仍被打标，TreeWalker 跳过 `[data-uut]` 祖先导致失败节点永久锁死、重试无效。改为"父元素的全部送译子节点均成功"才打标的延迟判定
+- **「临时显示原文」模式下的假失效**：该模式翻译成功进缓存但按模式不回写界面，按钮此前伪装 ✓——现明确提示当前模式与恢复方法
+- 部分游离自动补救：一趟内"成功+游离"混合时也自动补一趟（此前仅全部游离才重试，用户会看到中英夹杂需手动再点）；重试后仍全部游离（详情区持续重渲染）时按钮回到可再点的「译」而非伪装 ✓
+- 注入扫描性能：7500+ 条目 × 高频突变下，按钮存在性检查改 O(1) 快速路径（`firstElementChild`/`lastElementChild`），querySelector 仅作兜底
+
 ## [1.1.7] - 2026-09-12
 
 费用模型换基准 + 按钮位置指引（无代码逻辑变更）。

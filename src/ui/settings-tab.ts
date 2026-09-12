@@ -299,7 +299,8 @@ export class UutSettingTab extends PluginSettingTab {
       {
         key: "marketplace",
         label: "社区市场「译」按钮",
-        risk: "✅ 推荐：零自动消耗——按钮位置：列表条目【右上角】+ 点开插件后详情区【最顶端】；点击才翻译，缓存命中后重复点击零成本",
+        risk: "✅ 推荐：零自动消耗——按钮位置：列表条目【右上角】+ 点开插件后详情区【最顶端】；点击才翻译，缓存命中后重复点击零成本；" +
+          "失败时按钮变红 × 并弹出具体原因（预算超限 / 熔断中 / 网络错误），v1.1.8 起不再静默",
       },
     ];
     for (const item of interceptors) {

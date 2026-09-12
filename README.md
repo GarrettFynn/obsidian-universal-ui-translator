@@ -107,7 +107,7 @@ DeepSeek flash 系列自 2026-09-10 12:00（北京时间）起的定价（每百
 ```bash
 npm install
 npm run build          # tsc 类型检查 + esbuild（刻意不做 minify）
-npm test               # 122 个单元与集成测试
+npm test               # 149 个单元与集成测试
 npm run test:coverage  # 核心模块行覆盖率 75.9%–100%
 ```
 
@@ -181,7 +181,7 @@ Typical cost: **zero** — the free tiers of all major providers cover UI-text v
 ```bash
 npm install
 npm run build          # tsc type-check + esbuild (deliberately not minified)
-npm test               # 122 unit & integration tests
+npm test               # 149 unit & integration tests
 npm run test:coverage  # core modules 75.9%–100% line coverage
 ```
 

@@ -255,3 +255,97 @@ describe("TranslationCoordinator 数据流（设计文档 3.2）", () => {
     expect(notices).toBe(1);
   });
 });
+
+describe("translateWithOutcome 结果分类（v1.1.8：手动通道区分「无待译」与「失败」）", () => {
+  it("translated / cache / glossary / filtered / no-provider 各自归类", async () => {
+    const { coordinator, provider } = setup({ glossary: { "Open Settings": "开启设置" } });
+    const r1 = await coordinator.translateWithOutcome("Brand New Label", CTX);
+    expect(r1).toEqual({ text: "译:Brand New Label", outcome: "translated" });
+    // 第二次调用命中缓存
+    const r2 = await coordinator.translateWithOutcome("Brand New Label", CTX);
+    expect(r2).toEqual({ text: "译:Brand New Label", outcome: "cache" });
+    expect((provider as StubProvider).calls).toHaveLength(1);
+    // 术语表
+    expect((await coordinator.translateWithOutcome("Open Settings", CTX)).outcome).toBe("glossary");
+    // 过滤链
+    expect((await coordinator.translateWithOutcome("42", CTX)).outcome).toBe("filtered");
+    // 未配置 Provider
+    const np = setup({ provider: null });
+    const r3 = await np.coordinator.translateWithOutcome("Some Label", CTX);
+    expect(r3).toEqual({ text: "Some Label", outcome: "no-provider" });
+  });
+
+  it("budget：超限归类、不送译，onBudgetExceeded 每会话只触发一次", async () => {
+    const stub = new StubProvider();
+    let notices = 0;
+    const coordinator = new TranslationCoordinator(
+      new FilterEngine(),
+      new CacheManager(new MemoryIO(), "cache.json"),
+      () => stub,
+      {
+        targetLang: "zh-CN",
+        glossary: {},
+        usageTracker: { record: async () => undefined, isOverBudget: async () => true },
+        monthlyCharBudget: 1,
+        onBudgetExceeded: () => notices++,
+      }
+    );
+    const r1 = await coordinator.translateWithOutcome("Open Settings", CTX);
+    expect(r1).toEqual({ text: "Open Settings", outcome: "budget" });
+    await coordinator.translateWithOutcome("Another Label", CTX);
+    expect(notices).toBe(1); // 第二次超限不再重复提示
+    expect(stub.calls).toHaveLength(0);
+  });
+
+  it("failed 携带错误摘要；TTL 内同文本归类 negative-cache；连续失败归类 circuit", async () => {
+    const stub = new StubProvider();
+    stub.behavior = () => {
+      throw new Error("OpenAI HTTP 429: slow down");
+    };
+    const { coordinator } = setup({ provider: stub });
+    const r1 = await coordinator.translateWithOutcome("Some Label", CTX);
+    expect(r1.outcome).toBe("failed");
+    expect(r1.text).toBe("Some Label"); // 回退原文不变
+    expect(r1.error).toContain("HTTP 429");
+    // 负缓存：5 分钟内同文本不重试
+    const r2 = await coordinator.translateWithOutcome("Some Label", CTX);
+    expect(r2.outcome).toBe("negative-cache");
+    expect(stub.calls).toHaveLength(1);
+    // 再失败 4 次（累计连续 5 次）→ 熔断
+    for (let i = 0; i < 4; i++) {
+      await coordinator.translateWithOutcome(`Label Number ${i}`, CTX);
+    }
+    const r3 = await coordinator.translateWithOutcome("Fresh Label", CTX);
+    expect(r3.outcome).toBe("circuit");
+    expect(stub.calls).toHaveLength(5); // 熔断期内未发起新请求
+  });
+
+  it("bypassNegativeCache：手动点击在负缓存 TTL 内强制重试（熔断/预算不受影响）", async () => {
+    const stub = new StubProvider();
+    stub.failTimes = 1; // 第一次失败，之后成功
+    const { coordinator } = setup({ provider: stub });
+    expect((await coordinator.translateWithOutcome("Some Label", CTX)).outcome).toBe("failed");
+    // 默认路径：TTL 内被负缓存拦截
+    expect((await coordinator.translateWithOutcome("Some Label", CTX)).outcome).toBe(
+      "negative-cache"
+    );
+    expect(stub.calls).toHaveLength(1);
+    // 手动点击通道：绕过负缓存立即重试并成功
+    const r = await coordinator.translateWithOutcome("Some Label", CTX, {
+      bypassNegativeCache: true,
+    });
+    expect(r).toEqual({ text: "译:Some Label", outcome: "translated" });
+    expect(stub.calls).toHaveLength(2);
+  });
+
+  it("占位符被改写归类 failed 且不回写缓存（4.2.1 规则 6 闭环）", async () => {
+    const stub = new StubProvider();
+    stub.behavior = () => "个项目"; // 占位符 __UUTPH0__ 被 LLM 吃掉
+    const { coordinator, cache } = setup({ provider: stub });
+    const r = await coordinator.translateWithOutcome("{0} items", CTX);
+    expect(r.outcome).toBe("failed");
+    expect(r.error).toBe("译文占位符被改写");
+    const key = CacheManager.makeKey("{0} items", "stub", "zh-CN", "");
+    expect(cache.get(key)).toBeNull();
+  });
+});

@@ -15,7 +15,10 @@ function makeItem(text: string): HTMLElement {
 }
 
 function stubCoordinator(): TranslationCoordinator {
-  return { translate: async (t: string) => `译:${t}` } as unknown as TranslationCoordinator;
+  return {
+    translate: async (t: string) => `译:${t}`,
+    translateWithOutcome: async (t: string) => ({ text: `译:${t}`, outcome: "translated" }),
+  } as unknown as TranslationCoordinator;
 }
 
 /** v1.1.5 详情面板测试用 DOM：.mod-community-plugin 弹窗 = .modal-content > (.modal-sidebar + 详情区) */
@@ -95,6 +98,10 @@ describe("MarketplacePatcher（v1.1.0 社区市场条目级「译」按钮）", 
         calls.push(t);
         return `译:${t}`;
       },
+      translateWithOutcome: async (t: string) => {
+        calls.push(t);
+        return { text: `译:${t}`, outcome: "translated" };
+      },
     } as unknown as TranslationCoordinator;
     const writtenBack: string[] = [];
     const p = new MarketplacePatcher(
@@ -131,6 +138,10 @@ describe("MarketplacePatcher（v1.1.0 社区市场条目级「译」按钮）", 
       translate: async (t: string) => {
         calls.push(t);
         return `译:${t}`;
+      },
+      translateWithOutcome: async (t: string) => {
+        calls.push(t);
+        return { text: `译:${t}`, outcome: "translated" };
       },
     } as unknown as TranslationCoordinator;
     const p = new MarketplacePatcher(coord, (t) => t);
@@ -179,6 +190,10 @@ describe("MarketplacePatcher（v1.1.0 社区市场条目级「译」按钮）", 
         calls.push(t);
         return `译:${t}`;
       },
+      translateWithOutcome: async (t: string) => {
+        calls.push(t);
+        return { text: `译:${t}`, outcome: "translated" };
+      },
     } as unknown as TranslationCoordinator;
     const p = new MarketplacePatcher(coord, (t) => t);
     patchers.push(p);
@@ -214,5 +229,280 @@ describe("MarketplacePatcher（v1.1.0 社区市场条目级「译」按钮）", 
     expect(calls.some((t) => t.includes("git push"))).toBe(false);
     expect(calls.some((t) => t.includes("English List Item Name"))).toBe(false);
     expect(sidebar.textContent).toBe("English List Item Name");
+  });
+});
+
+
+describe("v1.1.8 失效感知：失败反馈 / 存活检查 / 自动重试 / 异常兜底", () => {
+  const patchers: MarketplacePatcher[] = [];
+  afterEach(() => {
+    for (const p of patchers.splice(0)) p.deactivate();
+    document.body.innerHTML = "";
+  });
+
+  it("翻译全部失败时按钮显示 × 并 Notice 说明原因（不再静默 ✓）；30 秒内同因去抖", async () => {
+    const coord = {
+      translateWithOutcome: async (t: string) => ({
+        text: t,
+        outcome: "failed" as const,
+        error: "OpenAI HTTP 429: slow down",
+      }),
+    } as unknown as TranslationCoordinator;
+    const notices: string[] = [];
+    const p = new MarketplacePatcher(coord, (t) => t, () => {}, undefined, undefined, (m) =>
+      notices.push(m)
+    );
+    patchers.push(p);
+    const item = makeItem("Super Plugin");
+    p.activate();
+    const btn = item.querySelector(":scope > .uut-mkt-btn") as HTMLButtonElement;
+    btn.click();
+    await tick();
+    expect(btn.textContent).toBe("×");
+    expect(btn.classList.contains("uut-mkt-btn-failed")).toBe(true);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain("HTTP 429");
+    expect(item.textContent).not.toContain("译:"); // 失败不回写
+    // 去抖：30 秒内同因重复点击不再弹 Notice
+    btn.click();
+    await tick();
+    expect(notices).toHaveLength(1);
+  });
+
+  it("预算超限时点击提示预算原因（此前纯静默——用户「按钮失效」观感的头号嫌疑）", async () => {
+    const coord = {
+      translateWithOutcome: async (t: string) => ({ text: t, outcome: "budget" as const }),
+    } as unknown as TranslationCoordinator;
+    const notices: string[] = [];
+    const p = new MarketplacePatcher(coord, (t) => t, () => {}, undefined, undefined, (m) =>
+      notices.push(m)
+    );
+    patchers.push(p);
+    const item = makeItem("Super Plugin");
+    p.activate();
+    const btn = item.querySelector(":scope > .uut-mkt-btn") as HTMLButtonElement;
+    btn.click();
+    await tick();
+    expect(btn.textContent).toBe("×");
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain("预算");
+  });
+
+  it("无可译节点（全被过滤）时显示 ✓——无失败态、无 Notice", async () => {
+    const coord = {
+      translateWithOutcome: async (t: string) => ({ text: t, outcome: "filtered" as const }),
+    } as unknown as TranslationCoordinator;
+    const notices: string[] = [];
+    const p = new MarketplacePatcher(coord, (t) => t, () => {}, undefined, undefined, (m) =>
+      notices.push(m)
+    );
+    patchers.push(p);
+    const item = makeItem("Super Plugin");
+    p.activate();
+    const btn = item.querySelector(":scope > .uut-mkt-btn") as HTMLButtonElement;
+    btn.click();
+    await tick();
+    expect(btn.textContent).toBe("✓");
+    expect(btn.classList.contains("uut-mkt-btn-failed")).toBe(false);
+    expect(notices).toHaveLength(0);
+  });
+
+  it("翻译途中节点游离则放弃回写（5.2 存活检查）；根容器仍存活时自动重试一次成功回写", async () => {
+    const notices: string[] = [];
+    let item!: HTMLElement;
+    let firstPass = true;
+    const coord = {
+      translateWithOutcome: async (t: string) => {
+        if (firstPass) {
+          firstPass = false;
+          // 模拟翻译途中详情区被重渲染：原节点（含按钮）销毁、同名原文节点重生
+          item.innerHTML = '<div class="community-item-name">Super Plugin</div>';
+          return { text: `译:${t}`, outcome: "translated" as const };
+        }
+        // 重试趟：第一趟译文已进缓存，零成本命中
+        return { text: `译:${t}`, outcome: "cache" as const };
+      },
+    } as unknown as TranslationCoordinator;
+    const p = new MarketplacePatcher(
+      coord,
+      (t, o) => `${t} (${o})`,
+      () => {},
+      undefined,
+      undefined,
+      (m) => notices.push(m)
+    );
+    patchers.push(p);
+    item = makeItem("Super Plugin");
+    p.activate();
+    const btn = item.querySelector(":scope > .uut-mkt-btn") as HTMLButtonElement;
+    btn.click();
+    await tick();
+    // 自动重试把重生节点回写成功——用户不再需要手动点第二次
+    expect(item.textContent).toContain("译:Super Plugin");
+    expect(notices).toHaveLength(0);
+  });
+
+  it("coordinator 意外抛错时按钮恢复「译」可重试（此前永久卡「…」）", async () => {
+    const coord = {
+      translateWithOutcome: async () => {
+        throw new Error("unexpected boom");
+      },
+    } as unknown as TranslationCoordinator;
+    const p = new MarketplacePatcher(coord, (t) => t, () => {}, undefined, undefined, () => {});
+    patchers.push(p);
+    const item = makeItem("Super Plugin");
+    p.activate();
+    const btn = item.querySelector(":scope > .uut-mkt-btn") as HTMLButtonElement;
+    btn.click();
+    await tick();
+    expect(btn.textContent).toBe("译");
+    expect(btn.getAttribute("disabled")).toBeNull();
+  });
+});
+
+
+describe("v1.1.8 复查补强：兄弟锁定 / 显示原文模式 / 部分游离", () => {
+  const patchers: MarketplacePatcher[] = [];
+  afterEach(() => {
+    for (const p of patchers.splice(0)) p.deactivate();
+    document.body.innerHTML = "";
+  });
+
+  /** 同父双文本节点条目：<p>First part <br> Second part</p>（README 段落的典型内联结构） */
+  function makeTwoPartItem(): { item: HTMLElement; para: HTMLElement } {
+    const item = document.createElement("div");
+    item.className = "community-item";
+    const para = document.createElement("p");
+    para.appendChild(document.createTextNode("First part "));
+    para.appendChild(document.createElement("br"));
+    para.appendChild(document.createTextNode("Second part"));
+    item.appendChild(para);
+    document.body.appendChild(item);
+    return { item, para };
+  }
+
+  it("锁定修复：同父兄弟部分失败时父元素不打标，再次点击可补全失败节点", async () => {
+    let failSecond = true;
+    const calls: string[] = [];
+    const coord = {
+      translateWithOutcome: async (t: string) => {
+        calls.push(t);
+        // 模拟生产环境规则 5c：已译双语产物不再送译
+        if (/[\u4e00-\u9fff]/.test(t)) return { text: t, outcome: "filtered" as const };
+        if (failSecond && t === "Second part") {
+          return { text: t, outcome: "failed" as const, error: "boom" };
+        }
+        return { text: `译:${t}`, outcome: "translated" as const };
+      },
+    } as unknown as TranslationCoordinator;
+    const notices: string[] = [];
+    const p = new MarketplacePatcher(coord, (t) => t, () => {}, undefined, undefined, (m) =>
+      notices.push(m)
+    );
+    patchers.push(p);
+    const { item, para } = makeTwoPartItem();
+    p.activate();
+    const btn = item.querySelector(":scope > .uut-mkt-btn") as HTMLButtonElement;
+    btn.click();
+    await tick();
+    expect(para.textContent).toContain("译:First part");
+    expect(para.textContent).toContain("Second part"); // 失败兄弟保持原文
+    expect(btn.textContent).toBe("✓1"); // 部分成功：不显示失败态
+    // 关键断言：父元素未打标（否则 TreeWalker 跳过 [data-uut] 祖先，失败节点永久锁死）
+    expect(para.getAttribute("data-uut")).toBeNull();
+    // 第二次点击：失败兄弟重试成功；已译兄弟被过滤不重复送译；全部成功后打标
+    failSecond = false;
+    btn.click();
+    await tick();
+    expect(para.textContent).toContain("译:Second part");
+    expect(para.getAttribute("data-uut")).toBe("mkt");
+    expect(calls.filter((t) => t === "译:译:First part")).toHaveLength(0); // 无嵌套重译
+  });
+
+  it("「临时显示原文」模式下点击：提示原因、按钮恢复「译」、译文已缓存但不回写", async () => {
+    const coord = {
+      translateWithOutcome: async (t: string) => ({
+        text: `译:${t}`,
+        outcome: "translated" as const,
+      }),
+    } as unknown as TranslationCoordinator;
+    const notices: string[] = [];
+    // format 恒返回 null = displayMode "original" 的回写抑制语义
+    const p = new MarketplacePatcher(coord, () => null, () => {}, undefined, undefined, (m) =>
+      notices.push(m)
+    );
+    patchers.push(p);
+    const item = makeItem("Super Plugin");
+    p.activate();
+    const btn = item.querySelector(":scope > .uut-mkt-btn") as HTMLButtonElement;
+    btn.click();
+    await tick();
+    expect(btn.textContent).toBe("译"); // 中性可重试，而非伪装 ✓
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain("临时显示原文");
+    expect(item.querySelector(".community-item-name")!.textContent).toBe("Super Plugin");
+  });
+
+  it("部分游离自动补救：一趟内成功+游离混合时自动补一趟（缓存命中零成本），无需用户再点", async () => {
+    let item!: HTMLElement;
+    let rebuilt = false;
+    const coord = {
+      translateWithOutcome: async (t: string) => {
+        if (!rebuilt && t === "Second part") {
+          rebuilt = true;
+          await null; // 让兄弟节点先完成回写，制造"部分成功 + 部分游离"
+          const para = item.querySelector("p")!;
+          para.innerHTML = "";
+          para.appendChild(document.createTextNode("First part "));
+          para.appendChild(document.createElement("br"));
+          para.appendChild(document.createTextNode("Second part"));
+          return { text: `译:${t}`, outcome: "translated" as const };
+        }
+        return { text: `译:${t}`, outcome: rebuilt ? ("cache" as const) : ("translated" as const) };
+      },
+    } as unknown as TranslationCoordinator;
+    const notices: string[] = [];
+    const p = new MarketplacePatcher(coord, (t) => t, () => {}, undefined, undefined, (m) =>
+      notices.push(m)
+    );
+    patchers.push(p);
+    const r = makeTwoPartItem();
+    item = r.item;
+    p.activate();
+    const btn = item.querySelector(":scope > .uut-mkt-btn") as HTMLButtonElement;
+    btn.click();
+    await tick();
+    // 第一趟 First part 回写成功、Second part 游离；自动第二趟把重生节点从缓存回写
+    const para = item.querySelector("p")!;
+    expect(para.textContent).toContain("译:First part");
+    expect(para.textContent).toContain("译:Second part");
+    expect(btn.textContent).toBe("✓3");
+    expect(notices).toHaveLength(0);
+  });
+
+  it("重试一趟仍全部游离（详情区持续重渲染）时按钮回到「译」而非伪装 ✓", async () => {
+    let item!: HTMLElement;
+    let callCount = 0;
+    const coord = {
+      translateWithOutcome: async (t: string) => {
+        callCount++;
+        // 每趟都再重渲染一次 → 两趟回写目标全部游离
+        item.innerHTML = '<div class="community-item-name">Super Plugin</div>';
+        return { text: `译:${t}`, outcome: "translated" as const };
+      },
+    } as unknown as TranslationCoordinator;
+    const notices: string[] = [];
+    const p = new MarketplacePatcher(coord, (t) => t, () => {}, undefined, undefined, (m) =>
+      notices.push(m)
+    );
+    patchers.push(p);
+    item = makeItem("Super Plugin");
+    p.activate();
+    const btn = item.querySelector(":scope > .uut-mkt-btn") as HTMLButtonElement;
+    btn.click();
+    await tick();
+    expect(callCount).toBe(2); // 只自动重试一趟，不死循环
+    expect(btn.textContent).toBe("译");
+    expect(notices).toHaveLength(0);
   });
 });
