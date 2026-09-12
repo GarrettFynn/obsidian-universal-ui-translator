@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.6] - 2026-09-11
+
+### Fixed
+
+- **详情「译」按钮覆盖 README 正文**（1.1.5 实测缺陷：只翻译了按钮旁的简短预览）：Obsidian 1.13.7 市场弹窗详情区是多个并列兄弟容器（简介头部与 README 正文分属不同子树），v1.1.5 以"第一个详情子容器"为翻译根罩不住正文。翻译根提升为整个 `.mod-community-plugin` 弹窗并排除左侧 `.modal-sidebar` 列表——README 无论在哪个子容器都覆盖，列表条目不重复送译，原生中文界面文本仍由规则 5c 零成本跳过
+
 ## [1.1.5] - 2026-09-11
 
 用户反馈修复：双语模式下译文被反复嵌套再翻（`译文 (译文 (…))` 乱码）；社区市场页面常驻持续消耗 API 额度；设置项风险标注缺失。

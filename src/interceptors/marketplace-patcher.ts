@@ -107,6 +107,8 @@ export class MarketplacePatcher {
    * 结构判定（不赌详情面板内部类名）：.mod-community-plugin 弹窗的 .modal-content 内，
    * 非 .modal-sidebar 且有实质文本的容器即详情区；未选中插件（空态）时不注入。
    * 详情内容随选中插件重渲染，按钮被冲掉后由 MutationObserver 触发重注入（幂等）。
+   * v1.1.6：按钮仍挂在此处，但点击的翻译根提升为整个 .mod-community-plugin 弹窗
+   * （排除 .modal-sidebar 列表）——详情区实为多个并列兄弟容器，宿主容器只罩得住简介头部
    */
   private injectDetailButton(doc: Document): boolean {
     const content = doc.querySelector(".mod-community-plugin .modal-content");
@@ -128,26 +130,36 @@ export class MarketplacePatcher {
     btn.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      void this.translateItem(detail, btn);
+      // v1.1.6：翻译根提升为整个市场弹窗、排除左侧列表——1.13.7 详情区是多个并列兄弟容器
+      // （简介头部与 README 正文分属不同子树），v1.1.5 以宿主容器为根只翻译了简短预览
+      const modal = detail.closest(".mod-community-plugin") as HTMLElement | null;
+      void this.translateItem(modal ?? detail, btn, ".modal-sidebar");
     });
     detail.insertBefore(btn, detail.firstChild);
     return true;
   }
 
   /**
-   * 点击翻译容器（条目 / 详情面板）：遍历子树文本节点并行送译并写回
+   * 点击翻译容器（条目 / 详情弹窗）：遍历子树文本节点并行送译并写回
    * （缓存命中时零 API 成本；已译节点跳过；code/pre 内代码不译——翻译会破坏代码）
    * 并行提交：批量通道按窗口聚合成批，避免长 README 逐节点串行等待数分钟
+   * @param skipClosest v1.1.6：额外排除的子树选择器（详情弹窗传 ".modal-sidebar" 跳过左侧列表）
    */
-  private async translateItem(item: HTMLElement, btn: HTMLButtonElement): Promise<void> {
+  private async translateItem(
+    item: HTMLElement,
+    btn: HTMLButtonElement,
+    skipClosest?: string
+  ): Promise<void> {
     btn.textContent = "…";
     btn.setAttribute("disabled", "true");
     try {
       const doc = item.ownerDocument;
+      const skipSelector =
+        "[data-no-translate], [data-uut], code, pre" + (skipClosest ? `, ${skipClosest}` : "");
       const walker = doc.createTreeWalker(item, NodeFilter.SHOW_TEXT, {
         acceptNode: (n: Node) =>
-          // 跳过按钮自身（data-no-translate）、已译节点（data-uut 标记）与代码块
-          n.parentElement?.closest("[data-no-translate], [data-uut], code, pre")
+          // 跳过按钮自身（data-no-translate）、已译节点（data-uut 标记）、代码块与排除子树
+          n.parentElement?.closest(skipSelector)
             ? NodeFilter.FILTER_REJECT
             : NodeFilter.FILTER_ACCEPT,
       });

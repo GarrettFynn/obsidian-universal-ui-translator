@@ -171,4 +171,48 @@ describe("MarketplacePatcher（v1.1.0 社区市场条目级「译」按钮）", 
     await tick();
     expect(detail.textContent).toContain("译:Second plugin README content here.");
   });
+
+  it("v1.1.6 回归：详情区为多个并列兄弟容器时，详情按钮覆盖简介+README 正文，sidebar 不送译", async () => {
+    const calls: string[] = [];
+    const coord = {
+      translate: async (t: string) => {
+        calls.push(t);
+        return `译:${t}`;
+      },
+    } as unknown as TranslationCoordinator;
+    const p = new MarketplacePatcher(coord, (t) => t);
+    patchers.push(p);
+    // 复现 Obsidian 1.13.7 实测布局：简介头部与 README 正文是 .modal-content 下不同兄弟容器
+    const modal = document.createElement("div");
+    modal.className = "modal mod-community-modal mod-community-plugin";
+    const content = document.createElement("div");
+    content.className = "modal-content";
+    const sidebar = document.createElement("div");
+    sidebar.className = "modal-sidebar";
+    sidebar.textContent = "English List Item Name"; // 侧栏英文也不应被详情按钮送译
+    const header = document.createElement("div");
+    header.innerHTML = "<p>Integrate Git version control with automatic backup.</p>";
+    const readme = document.createElement("div");
+    readme.innerHTML =
+      "<h2>Key Features</h2><p>Automatic commit-and-sync on a schedule.</p><pre>git push origin main</pre>";
+    content.appendChild(sidebar);
+    content.appendChild(header);
+    content.appendChild(readme);
+    modal.appendChild(content);
+    document.body.appendChild(modal);
+    p.activate();
+    // 按钮注入在第一个非 sidebar 容器（简介头部）顶部
+    const btn = header.querySelector(":scope > .uut-mkt-detail-btn") as HTMLButtonElement | null;
+    expect(btn).toBeTruthy();
+    btn!.click();
+    await tick();
+    // 简介头部与 README 正文（兄弟容器）都被翻译
+    expect(header.textContent).toContain("译:Integrate Git version control");
+    expect(readme.textContent).toContain("译:Key Features");
+    expect(readme.textContent).toContain("译:Automatic commit-and-sync on a schedule.");
+    // 代码块与侧栏均不送译
+    expect(calls.some((t) => t.includes("git push"))).toBe(false);
+    expect(calls.some((t) => t.includes("English List Item Name"))).toBe(false);
+    expect(sidebar.textContent).toBe("English List Item Name");
+  });
 });
