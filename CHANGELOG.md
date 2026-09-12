@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.7] - 2026-09-12
+
+费用模型换基准 + 按钮位置指引（无代码逻辑变更）。
+
+### Changed
+
+- **费用估算换用 DeepSeek flash 2026-09-10 新定价**（每百万 tokens：空闲 输入 ¥1 / 输出 ¥4，高峰翻倍；API 侧缓存命中 ¥0.02–0.04）：设置页用量统计升级为实时「tokens 分解 + 人民币费用」折算（高峰/空闲双口径），各分页旧美元价格标注全部替换；README 新增「费用估算」专节（定价表、折算模型、分场景费用、token 耗费速率、零成本路径）
+- 设置页「作用域」分页顶部说明改写为「译」按钮**精确位置指引**（列表条目右上角 / 详情区最顶端），使用说明 FAQ 同步
+
 ## [1.1.6] - 2026-09-11
 
 ### Fixed

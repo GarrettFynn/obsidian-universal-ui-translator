@@ -20,20 +20,24 @@ const PROVIDERS: Array<{ id: string; label: string }> = [
 ];
 
 /**
- * 费用估算基准（v1.1.5 风险标注诉求；单一事实来源，各 Tab 共用）：
- * DeepSeek V4 Flash（2026-08 调价后）峰时价——输入 $0.44 / 输出 $1.32 每百万 tokens，
- * 缓存命中输入 $0.014，低谷时段半价。经验折算：英文输入 tokens ≈ 字符数 / 4，
- * 中文输出 tokens ≈ 字符数 / 3。仅为量级参考，不代表服务商账单口径。
+ * 费用估算基准（v1.1.7 换价；单一事实来源，各 Tab 共用）：
+ * DeepSeek flash 系列 2026-09-10 12:00（北京时间）起，每百万 tokens：
+ * 空闲时段 输入缓存命中 ¥0.02 / 未命中 ¥1 / 输出 ¥4；高峰时段为空闲 2 倍（¥0.04 / ¥2 / ¥8）。
+ * 折算：输入 tokens ≈ 字符数 / 4（英文原文）；输出 tokens ≈ 字符数 / 2.5
+ * （中文译文 1 token ≈ 1.5 汉字，长度约为原文 60%）。仅为量级参考，不代表账单口径。
  */
 const COST_BASIS =
-  "费用基准：DeepSeek V4 Flash 峰时价 输入 $0.44 / 输出 $1.32 每百万 tokens（低谷半价，缓存命中更省）";
+  "费用基准：DeepSeek flash 新定价（2026-09-10 起）每百万 tokens：空闲 输入 ¥1 / 输出 ¥4，高峰时段翻倍；API 侧缓存命中输入仅 ¥0.02–0.04";
 
-/** 按基准价把已发送字符数折算为美元/人民币量级描述 */
+/** 按基准价把已发送字符数折算为 tokens 分解 + 人民币费用（高峰价，空闲减半） */
 function estimateCost(chars: number): string {
-  const usd = (chars / 4) * 0.44e-6 + (chars / 3) * 1.32e-6;
-  if (chars <= 0) return "≈ $0";
-  if (usd < 0.01) return "< $0.01（不足一角人民币）";
-  return `≈ $${usd.toFixed(3)}（约 ¥${(usd * 7.2).toFixed(2)}）`;
+  if (chars <= 0) return "≈ 0 tokens，¥0";
+  const inTok = Math.ceil(chars / 4);
+  const outTok = Math.ceil(chars / 2.5);
+  const yuan = inTok * 2e-6 + outTok * 8e-6; // 高峰时段价
+  const tokText = `${(inTok + outTok).toLocaleString()} tokens（入 ${inTok.toLocaleString()} / 出 ${outTok.toLocaleString()}）`;
+  if (yuan < 0.01) return `≈ ${tokText}，费用 < ¥0.01（空闲时段半价）`;
+  return `≈ ${tokText}，高峰 ≈ ¥${yuan.toFixed(2)}（空闲时段半价）`;
 }
 
 /**
@@ -205,7 +209,7 @@ export class UutSettingTab extends PluginSettingTab {
 
     new Setting(el)
       .setName("连通性测试")
-      .setDesc("向当前引擎发送一次测试请求（消耗极少额度：一条短文本，按基准价 < $0.0001）")
+      .setDesc("向当前引擎发送一次测试请求（消耗极少额度：一条短文本约几十 tokens，按基准价 < ¥0.001）")
       .addButton((b) =>
         b.setButtonText("测试连接").onClick(async () => {
           b.setDisabled(true);
@@ -246,16 +250,17 @@ export class UutSettingTab extends PluginSettingTab {
   /** 作用域：核心/社区开关、拦截器独立开关、白/黑名单（4.5 / FR-11；v1.1.5 风险标注） */
   private renderScope(el: HTMLElement): void {
     const s = this.plugin.settings;
-    // 推荐用法总说明：「译」按钮是本插件的核心功能定位——按需、单条目、缓存命中零成本
+    // 推荐用法总说明：「译」按钮是本插件的核心功能定位——写清两个按钮的精确位置（v1.1.7）
     el.createDiv({ cls: "uut-scope-note" }).setText(
-      "推荐用法：社区插件市场里，列表条目右上角与右侧详情面板（README 全文）各有「译」按钮——点哪条译哪条，" +
-        "只消耗对应文本的 API 额度（条目约 100–200 字符可忽略；README 全文数千字符约几分钱），译过即缓存、重复点击零成本。" +
-        "绝大多数需要阅读的英文内容是社区插件的说明与介绍，用「译」按钮即可覆盖，无需打开下面的自动翻译开关。"
+      "推荐用法——社区插件市场的「译」按钮有两个：① 左侧列表：每个插件条目的【右上角】，翻译该条目的名称+简介" +
+        "（约 150 字符，费用不足 0.1 分钱）；② 右侧详情：点开任意插件后，详情区【最顶端】的「译」按钮，翻译该插件的 README 全文" +
+        "（数千字符 ≈ 2,600 tokens，高峰价约 1.5 分钱，空闲时段半价）。两者译过即缓存、重复点击零成本。" +
+        "绝大多数要读的英文内容是插件说明与介绍，用「译」按钮即可覆盖，无需打开下面的自动翻译开关。"
     );
     new Setting(el)
       .setName("翻译 Obsidian 核心界面")
       .setDesc(
-        "低风险：核心界面文本量固定（约 5–10 万字符），一次性成本按基准价 < $0.05，缓存后零成本。" +
+        "低风险：核心界面文本量固定（约 5–10 万字符），一次性成本按基准价 ≈ ¥0.30 以内（空闲时段半价），缓存后零成本。" +
           "生效通道：核心命令（设置面板 / DOM 兜底通道技术上无法区分界面归属核心还是社区插件，不受此开关控制）"
       )
       .addToggle((t) =>
@@ -268,7 +273,7 @@ export class UutSettingTab extends PluginSettingTab {
       .setName("翻译社区插件界面")
       .setDesc(
         "⚠️ 高风险（API 消耗）：开启后社区市场浏览器的可见条目会被自动翻译，滚动列表即持续送译；" +
-          "市场数千条目全量约 30 万字符/轮（按基准价 ≈ ¥1–2），页面常驻期间反复触发——v1.1.5 起默认关闭，" +
+          "市场数千条目全量约 30 万字符/轮（按基准价高峰 ≈ ¥1.1、空闲 ≈ ¥0.55），页面常驻期间反复触发——v1.1.5 起默认关闭，" +
           "建议改用条目「译」按钮。生效通道：社区插件命令、市场浏览器自动翻译（设置面板 / DOM 兜底无法归因插件，不受此开关控制）"
       )
       .addToggle((t) =>
@@ -294,7 +299,7 @@ export class UutSettingTab extends PluginSettingTab {
       {
         key: "marketplace",
         label: "社区市场「译」按钮",
-        risk: "✅ 推荐：零自动消耗——只注入按钮（列表条目 + 详情面板各一个），点击才翻译；缓存命中后重复点击零成本",
+        risk: "✅ 推荐：零自动消耗——按钮位置：列表条目【右上角】+ 点开插件后详情区【最顶端】；点击才翻译，缓存命中后重复点击零成本",
       },
     ];
     for (const item of interceptors) {
@@ -358,7 +363,7 @@ export class UutSettingTab extends PluginSettingTab {
     new Setting(el)
       .setName("清空缓存")
       .setDesc(
-        "⚠️ 清空后所有界面将在下次打开时重新消耗 API 翻译一遍（按基准价：核心界面 < $0.05）。同时重置界面已显示的译文（R-07 联动）"
+        "⚠️ 清空后所有界面将在下次打开时重新消耗 API 翻译一遍（按基准价：核心界面 ≈ ¥0.30 以内，空闲时段半价）。同时重置界面已显示的译文（R-07 联动）"
       )
       .addButton((b) => {
         b.setButtonText("清空缓存");
