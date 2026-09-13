@@ -109,6 +109,19 @@ DeepSeek flash 系列自 2026-09-10 12:00（北京时间）起的定价（每百
 | 清空缓存 | 删除全部缓存译文并重置界面译态 | 译文异常（如嵌套乱码）排查、换术语表后重来；⚠️ 之后全部界面重译一遍（核心界面 ≈ ¥0.30 以内） |
 | 导出 / 导入 | 缓存与库根目录 JSON 文件互转（FR-12） | 换机迁移、把译文词表分享给他人（对方导入后零成本复用） |
 
+### 翻译速度怎么调
+
+觉得翻译慢时，按见效程度依次检查（都在设置页内）：
+
+1. **打开「关闭思考模式」**（API 配置页，见效最大）：DeepSeek V4、豆包等模型默认先"思考"再输出，UI 短文本无需推理——关掉后响应快一倍不止，还省 tokens。模型选 **turbo / flash 档**，别用 pro 档
+2. **最大并发请求数调到 5**（高级页）：并发决定多少批请求同时在途（批次数 ÷ 并发数 ≈ 排队轮数，并发 3 翻一篇 README 要排 5 轮、并发 5 只要 3 轮）。⚠️ 不要贪大：并发 10 容易打爆账号每分钟请求限额（HTTP 429），连续失败 5 次还会触发熔断**全停 10 分钟**——反而更慢、重试更费钱；仍看到 429 就降回 3
+3. **批量聚合窗口保持 100**（高级页）：窗口是攒批去重的等待时间，调大（如 455）会让每批白等近半秒，十几批就多等好几秒；调大只能略微减少重复请求，对总字符消耗无影响
+4. **显示模式用「纯译文」**（基础页）：双语对照的 LLM 输出长度约为纯译文 2 倍，生成时间直接翻倍；需要对照时再临时切换
+
+预期管理：首次翻译某篇内容慢是正常的（一篇插件 README ≈ 2,600 tokens，正常 2–5 秒）；进缓存后再次打开**零延迟**，速度问题只存在于"初见"。若 Console 持续刷 404/429，先解决模型配置（未开通/不存在的模型名会一直失败重试、拖慢整体），再谈提速。
+
+**推荐配置一览**：关闭思考模式 = 开 ｜ 模型 = flash/turbo 档 ｜ 批量窗口 = 100 ｜ 并发 = 5 ｜ 超时 = 30000 ｜ 显示模式 = 纯译文
+
 ### 免费额度教程：火山方舟「协作奖励计划」（每天用多少、次日返多少）
 
 火山引擎方舟平台的协作奖励计划：**授权推理接入点 → 当天产生的 token 用量，次日 11 点后以等额免费资源包形式返还，自动抵扣账单**——先记账、后抵扣，最终 0 元。个人实名账号单模型每日返还上限 50 万 tokens（本插件核心界面全量翻译一次性仅约 5 万 tokens，之后全部走缓存，日常用量远低于此上限）。
@@ -222,6 +235,19 @@ Typical cost: **zero** — the free tiers of all major providers cover UI-text v
   - **清理失效条目 (Purge stale entries)** — deletes cache entries that no longer match your current provider + language + model. The cache key embeds all three, so after switching models the old entries can never hit again and only waste space. Entries written before v1.1.9 carry no model marker and are judged by provider + language only.
   - **清空缓存 (Clear)** — wipes all cached translations and resets the UI translation state; everything retranslates once on next view (core UI ≈ ¥0.30).
   - **导出 / 导入 (Export / Import)** — move the cache to/from a JSON file in the vault root for migration or sharing; the recipient reuses your translations at zero API cost.
+
+### Tuning translation speed
+
+If translation feels slow, check these in order (all in the settings tabs):
+
+1. **Turn on "关闭思考模式" (disable thinking)** — the biggest win. Models like DeepSeek V4 / Doubao "think" before answering, and short UI text needs no reasoning; disabling thinking roughly halves latency and saves tokens. Prefer **flash/turbo-tier** models over pro-tier ones.
+2. **Set max concurrency to 5** (Advanced tab): queue rounds ≈ batch count ÷ concurrency — translating one README takes ~5 rounds at concurrency 3 but only ~3 at 5. ⚠️ Don't max it out: concurrency 10 easily trips your account's per-minute rate limit (HTTP 429), and 5 consecutive failures open a **10-minute circuit breaker** that stalls everything — slower *and* costlier due to retries. Drop back to 3 if you still see 429s.
+3. **Keep the batch window at 100 ms** (Advanced tab): the window is how long the plugin waits to dedupe and merge texts into one batch; raising it (e.g. 455) makes every batch wait nearly half a second longer — a dozen batches means several wasted seconds — while only marginally reducing duplicate requests and not changing total characters sent.
+4. **Use "纯译文" (translation-only) display mode** (General tab): bilingual output roughly doubles LLM output length and generation time; switch to bilingual only when you need it.
+
+Expectations: first-time translation of new content normally takes a moment (a plugin README ≈ 2.6k tokens, typically 2–5 s); once cached, reopening is **instant** — speed only matters for first encounters. If the console keeps logging 404/429, fix the model configuration first (an unavailable or unactivated model name retries forever and drags everything down).
+
+Recommended: thinking off · flash/turbo-tier model · batch window 100 · concurrency 5 · timeout 30000 · translation-only mode.
 
 ### Security & privacy
 
