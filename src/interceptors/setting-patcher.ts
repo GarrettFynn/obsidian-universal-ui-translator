@@ -50,15 +50,15 @@ export class SettingPatcher {
       this: Setting,
       name: string | DocumentFragment
     ) => Setting;
-    const self = this;
+    const translateText = this.translateText.bind(this);
     proto[method] = function (this: Setting, name: string | DocumentFragment): Setting {
       const result = original.call(this, name);
       if (typeof name === "string" && name.trim().length >= 2) {
         const el = (this as unknown as { nameEl?: HTMLElement }).nameEl;
         if (el) {
-          self.translateText(
+          translateText(
             name,
-            (formatted) => {
+            (formatted: string) => {
               el.textContent = formatted;
             },
             this
@@ -79,7 +79,7 @@ export class SettingPatcher {
       this: Setting,
       desc: string | DocumentFragment
     ) => Setting;
-    const self = this;
+    const translateText = this.translateText.bind(this);
     proto.setDesc = function (this: Setting, desc: string | DocumentFragment): Setting {
       const result = original.call(this, desc);
       const descEl = (this as unknown as { descEl?: HTMLElement }).descEl;
@@ -101,9 +101,9 @@ export class SettingPatcher {
         for (const node of nodes) {
           const fullText = node.nodeValue ?? "";
           const trimmed = fullText.trim();
-          self.translateText(
+          translateText(
             trimmed,
-            (formatted) => {
+            (formatted: string) => {
               node.nodeValue = fullText.replace(trimmed, formatted); // 保留前后空白
             },
             this

@@ -54,7 +54,12 @@ export class UutSettingTab extends PluginSettingTab {
     super(app, plugin);
   }
 
-  async display(): Promise<void> {
+  display(): void {
+    void this.renderTabs();
+  }
+
+  /** 实际渲染（原 display 方法体）：基类 display() 为 void，异步渲染经 void 发起不阻塞 */
+  private async renderTabs(): Promise<void> {
     const { containerEl } = this;
     containerEl.empty();
     // 自我防护：本插件设置页不被自家拦截通道翻译（白名单 [data-no-translate]）
@@ -68,7 +73,7 @@ export class UutSettingTab extends PluginSettingTab {
       });
       btn.addEventListener("click", () => {
         this.activeTab = tab.id;
-        void this.display();
+        void this.renderTabs();
       });
     }
 
@@ -144,7 +149,7 @@ export class UutSettingTab extends PluginSettingTab {
       d.setValue(s.activeProvider).onChange(async (v) => {
         s.activeProvider = v;
         await this.plugin.saveSettings();
-        await this.display();
+        await this.renderTabs();
       });
     });
 
@@ -166,7 +171,7 @@ export class UutSettingTab extends PluginSettingTab {
           .setPlaceholder(keySaved ? "已保存，输入新 Key 可覆盖" : "输入后自动加密保存")
           .onChange(async (v) => {
             await this.plugin.saveApiKey(s.activeProvider, v.trim());
-            await this.display();
+            await this.renderTabs();
           });
       });
 
@@ -384,7 +389,7 @@ export class UutSettingTab extends PluginSettingTab {
         b.setButtonText("立即落盘").onClick(async () => {
           const res = await this.plugin.flushCacheNow();
           new Notice(`UUT：${res.message}`);
-          await this.display();
+          await this.renderTabs();
         })
       );
     new Setting(el)
@@ -397,7 +402,7 @@ export class UutSettingTab extends PluginSettingTab {
         b.setButtonText("清理失效条目").onClick(async () => {
           const res = await this.plugin.purgeStaleCacheEntries();
           new Notice(`UUT：${res.message}`);
-          await this.display();
+          await this.renderTabs();
         })
       );
     new Setting(el)
@@ -410,15 +415,18 @@ export class UutSettingTab extends PluginSettingTab {
       .addButton((b) => {
         b.setButtonText("清空缓存");
         // 1.13 起 setWarning 弃用 → setDestructive；低版本运行时特征检测回退
-        const btn = b as unknown as { setDestructive?: () => unknown };
+        const btn = b as unknown as {
+          setDestructive?: () => unknown;
+          setWarning?: () => unknown;
+        };
         if (typeof btn.setDestructive === "function") btn.setDestructive();
-        else b.setWarning();
+        else btn.setWarning?.();
         b.onClick(async () => {
           this.plugin.cache.clear();
           this.plugin.resetCommandTranslations();
           await this.plugin.cache.flush();
           new Notice("UUT：缓存已清空，界面译文将在下次访问时重新翻译");
-          await this.display();
+          await this.renderTabs();
         });
       });
     new Setting(el)
@@ -451,7 +459,7 @@ export class UutSettingTab extends PluginSettingTab {
           }
           const res = await this.plugin.importCache(await file.text());
           new Notice(`UUT：${res.message}`);
-          await this.display();
+          await this.renderTabs();
         })
       );
   }
@@ -492,7 +500,7 @@ export class UutSettingTab extends PluginSettingTab {
 
     // 近 30 天柱状图：每根条堆叠 输出（上）+ 输入（下），高度按窗口内最大值归一；悬停看精确值
     const maxTok = Math.max(1, ...daily.map(toTok));
-    el.createEl("h4", { text: "近 30 天逐日用量（tokens 估算）" });
+    new Setting(el).setName("近 30 天逐日用量（tokens 估算）").setHeading();
     const chart = el.createDiv("uut-chart");
     for (const d of daily) {
       const iT = Math.ceil(d.inChars / 4);

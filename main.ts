@@ -196,16 +196,16 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     });
   }
 
-  async onunload(): Promise<void> {
-    // 稳定性要求（2.2）：所有原型劫持完整还原；批量窗口结算；缓存强制 flush（4.2.3）
+  onunload(): void {
+    // 稳定性要求（2.2）：所有原型劫持完整还原；批量窗口结算与缓存 flush 异步发起、不阻塞卸载（4.2.3）
     this.commandPatcher?.deactivate();
     this.menuPatcher?.deactivate();
     this.settingPatcher?.deactivate();
     this.domPatcher?.deactivate();
     this.marketplacePatcher?.deactivate();
     this.windowHook?.deactivate();
-    await this.batcher.flush();
-    await this.cache.flush();
+    void this.batcher.flush();
+    void this.cache.flush();
   }
 
   async saveSettings(): Promise<void> {
@@ -526,9 +526,8 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     if (pluginId === "core") {
       const v = resolveObsidianVersion(
         (this.app as unknown as { appVersion?: string }).appVersion,
-        // R-05 兜底：从 UA 取 Obsidian 版本号（非 OS 探测，Platform API 不提供版本信息；
-        // 计算属性访问以兼容官方 lint 对 navigator 标识符的静态限制）
-        globalThis["navigator"]?.["userAgent"] ?? ""
+        // R-05 兜底：从 UA 取 Obsidian 版本号（非 OS 探测，Platform API 不提供版本信息）
+        window.navigator?.userAgent ?? ""
       );
       return `core@${v}`;
     }

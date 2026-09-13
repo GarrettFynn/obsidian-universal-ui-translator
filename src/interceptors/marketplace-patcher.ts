@@ -137,7 +137,7 @@ export class MarketplacePatcher {
       (el): el is HTMLElement =>
         !(el as HTMLElement).classList?.contains("modal-sidebar") &&
         (el.textContent?.trim().length ?? 0) > 20
-    ) as HTMLElement | undefined;
+    );
     if (!detail) return false;
     // O(1) 快速路径：按钮由本通道 insertBefore 在首位；querySelector 仅作兜底
     const first = detail.firstElementChild;
@@ -153,7 +153,7 @@ export class MarketplacePatcher {
       e.stopPropagation();
       // v1.1.6：翻译根提升为整个市场弹窗、排除左侧列表——1.13.7 详情区是多个并列兄弟容器
       // （简介头部与 README 正文分属不同子树），v1.1.5 以宿主容器为根只翻译了简短预览
-      const modal = detail.closest(".mod-community-plugin") as HTMLElement | null;
+      const modal = detail.closest<HTMLElement>(".mod-community-plugin");
       void this.translateItem(modal ?? detail, btn, ".modal-sidebar");
     });
     detail.insertBefore(btn, detail.firstChild);

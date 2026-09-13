@@ -28,14 +28,12 @@ export class MenuPatcher {
       new Notice("UUT：菜单通道翻译已停用（addItem 特征检测失败）");
       return false;
     }
-    this.originalAddItem = Menu.prototype.addItem;
-    const self = this;
-    (Menu.prototype as unknown as Record<string, unknown>).addItem = function (
-      this: Menu,
-      cb: (item: MenuItem) => void
-    ): Menu {
-      return self.originalAddItem!.call(this, (item: MenuItem) => {
-        self.wrapSetTitle(item);
+    const originalAddItem = proto.addItem as Menu["addItem"];
+    this.originalAddItem = originalAddItem;
+    const wrapSetTitle = (item: MenuItem) => this.wrapSetTitle(item);
+    proto.addItem = function (this: Menu, cb: (item: MenuItem) => void): Menu {
+      return originalAddItem.call(this, (item: MenuItem) => {
+        wrapSetTitle(item);
         return cb(item);
       });
     };
@@ -53,22 +51,21 @@ export class MenuPatcher {
 
   private wrapSetTitle(item: MenuItem): void {
     const originalSetTitle = item.setTitle.bind(item);
-    const self = this;
-    item.setTitle = function (title: string | DocumentFragment): MenuItem {
+    item.setTitle = (title: string | DocumentFragment): MenuItem => {
       if (typeof title !== "string" || !title) {
         return originalSetTitle(title);
       }
       const result = originalSetTitle(title); // 先显原文，不阻塞菜单弹出
-      self.coordinator
+      this.coordinator
         .translate(title, { source: "menu", pluginId: "unknown" })
         .then((t) => {
-          const formatted = self.format(t, title);
+          const formatted = this.format(t, title);
           if (formatted === null) return;
           originalSetTitle(formatted);
           // 双语模式：仅显译文，原文进 tooltip（5.1 空间受限区域策略）
           // titleEl 为 Obsidian 运行时内部属性（公开类型未声明），按项目惯例断言访问
           const titleEl = (item as unknown as { titleEl?: HTMLElement }).titleEl;
-          if (self.isBilingual() && titleEl) {
+          if (this.isBilingual() && titleEl) {
             titleEl.setAttr("title", title);
           }
         })

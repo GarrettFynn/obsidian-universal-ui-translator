@@ -41,7 +41,7 @@ export abstract class TranslationProvider {
   /** 默认实现：受控并发（上限 3）逐条翻译，保持返回顺序与输入一致 */
   async translateBatch(texts: string[]): Promise<string[]> {
     const limit = 3;
-    const out: string[] = new Array(texts.length);
+    const out: string[] = new Array<string>(texts.length);
     let i = 0;
     const workers = Array.from({ length: Math.min(limit, texts.length) }, async () => {
       while (i < texts.length) {

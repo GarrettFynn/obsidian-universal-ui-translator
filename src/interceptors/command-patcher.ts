@@ -59,14 +59,13 @@ export class CommandPatcher {
       sweep();
     }
     // 路径 2：增量劫持——本插件加载后才注册的命令
-    this.originalAddCommand = Plugin.prototype.addCommand;
-    const self = this;
-    (Plugin.prototype as unknown as Record<string, unknown>).addCommand = function (
-      this: Plugin,
-      command: Command
-    ) {
-      self.patchCommand(command, this.manifest?.id ?? "unknown");
-      return self.originalAddCommand!.call(this, command);
+    const original = proto.addCommand as Plugin["addCommand"];
+    this.originalAddCommand = original;
+    const patchCommand = (command: Command, pluginId: string) =>
+      this.patchCommand(command, pluginId);
+    proto.addCommand = function (this: Plugin, command: Command) {
+      patchCommand(command, this.manifest?.id ?? "unknown");
+      return original.call(this, command);
     };
     this.debug("CommandPatcher 已激活（addCommand 增量劫持就绪；存量扫描待布局就绪）");
     return true;

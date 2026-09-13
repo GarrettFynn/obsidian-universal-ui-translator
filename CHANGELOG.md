@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.10] - 2026-09-14
+
+官方目录自动审查合规修复：1.1.9 因设置页一处自建 HTML 标题元素被判 Failed，本版按审查意见整改并顺带清零低风险告警。无功能与行为变更。
+
+### Fixed
+
+- **审查 Error：设置页直接创建 HTML 标题元素**：用量统计页「近 30 天逐日用量」标题由 `createEl("h4")` 改为 `new Setting(...).setName(...).setHeading()`，与 Obsidian 设置 UI 风格统一
+- **`onunload` / `display` 返回类型不符基类约定**：均由 `Promise<void>` 改为 `void`（Obsidian 调用方本就不 await，行为不变；缓存 flush 改异步发起不阻塞卸载）
+- **原型劫持代码的 this 别名与 unbound method 告警**：命令 / 菜单 / 设置 / window.open 四个拦截通道改用箭头函数捕获或 bind，patch/restore 语义不变
+- **其余静态告警**：`globalThis` 改 `window.navigator`（popout 窗口兼容）、冗余类型断言删除、`new Array()` 隐式 any[] 消除、`setWarning` 弃用调用改特征检测访问（保留低版本回退）
+
 ## [1.1.9] - 2026-09-13
 
 用户反馈修复：缓存条目封顶 5000 且设置页无法调大；社区市场 README 译文缓存被提前淘汰、重复打开时重复消耗 API。同版新增用量统计图表页与缓存治理功能。

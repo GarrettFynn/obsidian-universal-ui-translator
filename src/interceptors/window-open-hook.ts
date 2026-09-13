@@ -14,14 +14,16 @@ export class WindowOpenHook {
   activate(onWindow: (win: Window) => void): boolean {
     if (typeof window.open !== "function" || this.original) return this.original !== null;
     this.original = window.open;
-    const self = this;
+    const original = this.original;
+    const notifyWhenReady = (win: Window, onReady: (w: Window) => void) =>
+      this.notifyWhenReady(win, onReady);
     window.open = function (
       ...args: Parameters<typeof window.open>
     ): ReturnType<typeof window.open> {
-      const win = self.original!.apply(window, args);
-      if (win) self.notifyWhenReady(win as Window, onWindow);
+      const win = original.apply(window, args);
+      if (win) notifyWhenReady(win, onWindow);
       return win;
-    } as typeof window.open;
+    };
     return true;
   }
 
