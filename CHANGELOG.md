@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.11] - 2026-09-14
+
+官方目录自动审查合规修复：1.1.10 因一处 navigator API 引用被判 Failed。无功能与行为变更。
+
+### Fixed
+
+- **审查 Error：禁止使用 navigator API**：核心缓存键版本维度（`core@<版本>`）在 `app.appVersion` 缺失时的 UA 解析兜底整体移除——静态检查不区分用途（本处并非 OS 探测），Platform API 又不提供版本号、无合规替代。降级影响：appVersion 缺失的极端场景下缓存键固定为 `core@unknown`，Obsidian 升级后旧译不再惰性失效，可经设置页「清空缓存」手动重建；`resolveFrom` 在翻译期调用（布局就绪后），正常情况下 appVersion 均有值，不受影响
+
 ## [1.1.10] - 2026-09-14
 
 官方目录自动审查合规修复：1.1.9 因设置页一处自建 HTML 标题元素被判 Failed，本版按审查意见整改并顺带清零低风险告警。无功能与行为变更。

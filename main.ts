@@ -524,10 +524,10 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
   /** 缓存来源维度（4.2.3 / D5）：pluginId@version，核心文本为 core@appVersion */
   private resolveFrom(pluginId: string): string {
     if (pluginId === "core") {
+      // R-05：appVersion 内部属性可能为空；v1.1.11 起 UA 兜底因官方审查
+      // navigator 禁令移除，缺失时降级为 "unknown"（见 app-version.ts 注释）
       const v = resolveObsidianVersion(
-        (this.app as unknown as { appVersion?: string }).appVersion,
-        // R-05 兜底：从 UA 取 Obsidian 版本号（非 OS 探测，Platform API 不提供版本信息）
-        window.navigator?.userAgent ?? ""
+        (this.app as unknown as { appVersion?: string }).appVersion
       );
       return `core@${v}`;
     }
