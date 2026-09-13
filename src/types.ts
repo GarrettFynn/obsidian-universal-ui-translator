@@ -73,7 +73,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   activeProvider: "openai",
   providers: {},
   cacheEnabled: true,
-  cacheMaxEntries: 5000,
+  cacheMaxEntries: 50000,
   batchWindowMs: 100,
   maxConcurrentRequests: 3,
   requestTimeoutMs: 30000,
@@ -98,6 +98,8 @@ export interface CacheEntry {
   tgt: string;
   provider: string;
   lang: string;
+  /** v1.1.9：模型 id 冗余（缓存键已含模型维度；供「清理失效条目」按模型判定；旧条目无此字段） */
+  model?: string;
   /** 来源维度：pluginId@version，核心文本为 core@appVersion */
   from: string;
   hits: number;

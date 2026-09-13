@@ -1,11 +1,12 @@
 import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import type UniversalUiTranslatorPlugin from "../../main";
 
-type TabId = "general" | "api" | "scope" | "cache" | "advanced";
+type TabId = "general" | "api" | "usage" | "scope" | "cache" | "advanced";
 
 const TABS: Array<{ id: TabId; label: string }> = [
   { id: "general", label: "基础" },
   { id: "api", label: "API 配置" },
+  { id: "usage", label: "用量统计" },
   { id: "scope", label: "作用域" },
   { id: "cache", label: "缓存" },
   { id: "advanced", label: "高级" },
@@ -74,8 +75,9 @@ export class UutSettingTab extends PluginSettingTab {
     const content = containerEl.createDiv("uut-tab-content");
     if (this.activeTab === "general") this.renderGeneral(content);
     else if (this.activeTab === "api") await this.renderApi(content);
+    else if (this.activeTab === "usage") await this.renderUsage(content);
     else if (this.activeTab === "scope") this.renderScope(content);
-    else if (this.activeTab === "cache") this.renderCache(content);
+    else if (this.activeTab === "cache") await this.renderCache(content);
     else this.renderAdvanced(content);
   }
 
@@ -327,14 +329,14 @@ export class UutSettingTab extends PluginSettingTab {
     }
   }
 
-  /** 缓存：开关、统计、落盘、清空、导出/导入（4.5 / FR-12；v1.1.5 风险标注与立即落盘） */
-  private renderCache(el: HTMLElement): void {
+  /** 缓存：开关、上限、统计、落盘、清理、清空、导出/导入（4.5 / FR-12；v1.1.9 说明三段式重写 + 失效条目清理 + 磁盘文件实况） */
+  private async renderCache(el: HTMLElement): Promise<void> {
     const s = this.plugin.settings;
     new Setting(el)
       .setName("启用本地缓存")
       .setDesc(
-        "译文持久化到插件目录 translation-cache.json，同一文本只付一次 API 费用。" +
-          "⚠️ 关闭后每次渲染界面都重新调 API（同一界面反复消耗额度），除非排查问题否则不要关"
+        "是什么：译文持久化到插件目录 translation-cache.json——同一文本只付一次 API 费用，重启 Obsidian 后仍然有效。" +
+          "什么时候关：只有排查翻译异常时才需要关。⚠️ 关闭后每次渲染界面都重新调 API，同一界面会反复消耗额度"
       )
       .addToggle((t) =>
         t.setValue(s.cacheEnabled).onChange(async (v) => {
@@ -342,18 +344,42 @@ export class UutSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         })
       );
+    new Setting(el)
+      .setName("缓存条目上限")
+      .setDesc(
+        "是什么：内存与磁盘共用此上限（默认 50000，范围 1000–200000；磁盘另有 64MB 字节硬顶，先到先截），超出后淘汰最久未用的条目。" +
+          "什么时候调：社区市场 README 全文翻译条目量大，上限太低会提前淘汰译文、下次打开重复消耗 API——译文是纯文本不占空间，建议往宽了设。" +
+          "代价：容量越大，启动时加载缓存越久（毫秒级）、占内存越多。修改即时生效；调小会立即淘汰最旧条目"
+      )
+      .addText((text) => {
+        text.inputEl.type = "number";
+        text.setValue(String(s.cacheMaxEntries)).onChange(async (v) => {
+          const n = Number(v);
+          if (Number.isFinite(n) && n >= 1000 && n <= 200000) {
+            s.cacheMaxEntries = Math.floor(n);
+            await this.plugin.saveSettings();
+          }
+        });
+      });
     const stats = this.plugin.cache.stats();
+    const bytes = await this.plugin.cacheFileBytes();
+    const sizeInfo =
+      bytes === null ? "磁盘文件尚未创建" : `磁盘文件约 ${(bytes / 1024 / 1024).toFixed(2)} MB`;
     const flushInfo = stats.lastFlushAt
       ? `最后落盘 ${new Date(stats.lastFlushAt).toLocaleTimeString()}`
       : "本会话尚未落盘（每 30s 检查，累计 100 条或 5 分钟自动落盘；也可点下方「立即落盘」）";
     new Setting(el)
       .setName("缓存统计")
       .setDesc(
-        `条目 ${stats.size}，命中率 ${(stats.hitRate * 100).toFixed(1)}%（会话内内存统计——命中率越高，越多内容走了本地缓存、越省钱）｜文件 translation-cache.json｜${flushInfo}`
+        `条目 ${stats.size}（内存=磁盘同上限）｜命中率 ${(stats.hitRate * 100).toFixed(1)}%（本会话统计——命中率越高，越多内容走了本地缓存、越省钱）｜${sizeInfo}｜${flushInfo}`
       );
     new Setting(el)
       .setName("立即落盘")
-      .setDesc("把内存中的新译文立刻写入磁盘，不等自动落盘策略（崩溃/强杀最多丢失 5 分钟译文的窗口由此手动关闭）。零 API 消耗")
+      .setDesc(
+        "是什么：新译的译文先存在内存里，插件每 30 秒检查一次——累计满 100 条新译文、或距上次落盘满 5 分钟，才写入磁盘文件；插件正常卸载/关库时也会强制写入。" +
+          "什么时候点：刚翻完一大批市场 README、或准备关机/重启 Obsidian 前点一下，立刻把内存里的新译文写入磁盘。" +
+          "不点会怎样：崩溃/强杀会丢掉「上次落盘以来」的新译文（最多 5 分钟的量），正常退出不受影响。零 API 消耗"
+      )
       .addButton((b) =>
         b.setButtonText("立即落盘").onClick(async () => {
           const res = await this.plugin.flushCacheNow();
@@ -362,9 +388,24 @@ export class UutSettingTab extends PluginSettingTab {
         })
       );
     new Setting(el)
+      .setName("清理失效条目")
+      .setDesc(
+        "是什么：删除与当前「引擎 + 目标语言 + 模型」不匹配的缓存条目——缓存键包含这三个维度，换过模型或引擎后，旧条目永远不会再命中，纯占空间。" +
+          "什么时候点：换过模型/引擎/目标语言之后点一次。注意：v1.1.9 之前写入的旧条目没有模型标记，只能按引擎+语言判定。零 API 消耗"
+      )
+      .addButton((b) =>
+        b.setButtonText("清理失效条目").onClick(async () => {
+          const res = await this.plugin.purgeStaleCacheEntries();
+          new Notice(`UUT：${res.message}`);
+          await this.display();
+        })
+      );
+    new Setting(el)
       .setName("清空缓存")
       .setDesc(
-        "⚠️ 清空后所有界面将在下次打开时重新消耗 API 翻译一遍（按基准价：核心界面 ≈ ¥0.30 以内，空闲时段半价）。同时重置界面已显示的译文（R-07 联动）"
+        "是什么：删除全部缓存译文（内存+磁盘），同时重置界面已显示的译文（R-07 联动）。" +
+          "什么时候用：译文出现异常（如嵌套乱码）、或换了术语表想全部重译时。" +
+          "⚠️ 代价：清空后所有界面将在下次打开时重新消耗 API 翻译一遍（按基准价：核心界面 ≈ ¥0.30 以内，空闲时段半价）"
       )
       .addButton((b) => {
         b.setButtonText("清空缓存");
@@ -382,7 +423,10 @@ export class UutSettingTab extends PluginSettingTab {
       });
     new Setting(el)
       .setName("导出缓存")
-      .setDesc("导出到库根目录 universal-ui-translator-cache-export.json，可共享给其他用户（零 API 消耗）")
+      .setDesc(
+        "是什么：把缓存完整导出到库根目录 universal-ui-translator-cache-export.json。" +
+          "什么时候用：换电脑迁移，或把自己积累的译文分享给他人——对方导入后零 API 消耗直接复用（FR-12）。零 API 消耗"
+      )
       .addButton((b) =>
         b.setButtonText("导出").onClick(async () => {
           const res = await this.plugin.exportCache();
@@ -394,7 +438,10 @@ export class UutSettingTab extends PluginSettingTab {
     });
     new Setting(el)
       .setName("导入缓存")
-      .setDesc("选择缓存 JSON 文件（校验 schemaVersion 与条目结构，非法文件拒绝）")
+      .setDesc(
+        "是什么：从缓存 JSON 文件合并条目进本地缓存（校验 schemaVersion 与条目结构，非法文件拒绝）。" +
+          "什么时候用：换机迁移回来，或接收他人分享的译文词表。零 API 消耗"
+      )
       .addButton((b) =>
         b.setButtonText("导入").onClick(async () => {
           const file = fileInput.files?.[0];
@@ -407,6 +454,103 @@ export class UutSettingTab extends PluginSettingTab {
           await this.display();
         })
       );
+  }
+
+  /**
+   * 用量统计（v1.1.9）：本月汇总卡片 + 近 30 天逐日柱状图（纯 DOM/CSS 零依赖）。
+   * tokens 为字符折算估算（输入 ≈ 字符/4、输出 ≈ 字符/2.5，与费用基准同口径），非账单口径
+   */
+  private async renderUsage(el: HTMLElement): Promise<void> {
+    const month = await this.plugin.getUsageMonthStats();
+    const monthChars = await this.plugin.monthlyUsage();
+    const daily = await this.plugin.getUsageDaily(30);
+    const inTok = Math.ceil(month.inChars / 4);
+    const outTok = Math.ceil(month.outChars / 2.5);
+    const cost = this.estimateCostSplit(month.inChars, month.outChars);
+    const toTok = (d: { inChars: number; outChars: number }) =>
+      Math.ceil(d.inChars / 4) + Math.ceil(d.outChars / 2.5);
+
+    new Setting(el)
+      .setName("本月用量")
+      .setDesc(
+        `送译 ${month.calls.toLocaleString()} 条｜输入 ${month.inChars.toLocaleString()} 字符 ≈ ${inTok.toLocaleString()} tokens｜` +
+          `输出 ${month.outChars.toLocaleString()} 字符 ≈ ${outTok.toLocaleString()} tokens｜估算费用 ${cost}。` +
+          `本月累计发送 ${monthChars.toLocaleString()} 字符（与月度预算同口径，usage.json 持久化）。` +
+          "逐日明细自 v1.1.9 起记录，此前历史只有月累计"
+      );
+
+    const cards = el.createDiv("uut-usage-cards");
+    const addCard = (label: string, value: string) => {
+      const c = cards.createDiv("uut-usage-card");
+      c.createDiv("uut-usage-card-label").setText(label);
+      c.createDiv("uut-usage-card-value").setText(value);
+    };
+    addCard("本月送译条数", month.calls.toLocaleString());
+    addCard("输入 tokens（估算）", inTok.toLocaleString());
+    addCard("输出 tokens（估算）", outTok.toLocaleString());
+    addCard("估算费用", cost);
+
+    // 近 30 天柱状图：每根条堆叠 输出（上）+ 输入（下），高度按窗口内最大值归一；悬停看精确值
+    const maxTok = Math.max(1, ...daily.map(toTok));
+    el.createEl("h4", { text: "近 30 天逐日用量（tokens 估算）" });
+    const chart = el.createDiv("uut-chart");
+    for (const d of daily) {
+      const iT = Math.ceil(d.inChars / 4);
+      const oT = Math.ceil(d.outChars / 2.5);
+      const bar = chart.createDiv("uut-chart-bar");
+      bar.title =
+        `${d.date}：调用 ${d.calls} 条\n` +
+        `输入 ${d.inChars.toLocaleString()} 字符 ≈ ${iT.toLocaleString()} tokens\n` +
+        `输出 ${d.outChars.toLocaleString()} 字符 ≈ ${oT.toLocaleString()} tokens`;
+      if (oT > 0) bar.createDiv("uut-chart-out").style.height = `${(oT / maxTok) * 100}%`;
+      if (iT > 0) bar.createDiv("uut-chart-in").style.height = `${(iT / maxTok) * 100}%`;
+    }
+    const axis = el.createDiv("uut-chart-axis");
+    axis.createSpan().setText(daily[0]?.date ?? "");
+    axis.createSpan().setText(daily[Math.floor(daily.length / 2)]?.date ?? "");
+    axis.createSpan().setText(daily[daily.length - 1]?.date ?? "");
+    const legend = el.createDiv("uut-chart-legend");
+    const lg1 = legend.createSpan();
+    lg1.createSpan({ cls: "uut-chart-swatch uut-swatch-in" });
+    lg1.appendText("输入 tokens（估算）");
+    const lg2 = legend.createSpan();
+    lg2.createSpan({ cls: "uut-chart-swatch uut-swatch-out" });
+    lg2.appendText("输出 tokens（估算）");
+
+    const today = daily[daily.length - 1];
+    const week = daily.slice(-7).reduce(
+      (acc, d) => ({
+        calls: acc.calls + d.calls,
+        inChars: acc.inChars + d.inChars,
+        outChars: acc.outChars + d.outChars,
+      }),
+      { calls: 0, inChars: 0, outChars: 0 }
+    );
+    new Setting(el)
+      .setName("今日 / 近 7 日")
+      .setDesc(
+        `今日：${today?.calls ?? 0} 条，估算 ${toTok(
+          today ?? { inChars: 0, outChars: 0 }
+        ).toLocaleString()} tokens｜近 7 日：${week.calls.toLocaleString()} 条，估算 ${(
+          Math.ceil(week.inChars / 4) + Math.ceil(week.outChars / 2.5)
+        ).toLocaleString()} tokens`
+      );
+    new Setting(el)
+      .setName("口径说明")
+      .setDesc(
+        COST_BASIS +
+          "；tokens 由字符数折算（输入 ≈ 字符/4、输出 ≈ 字符/2.5），仅量级参考，不代表账单口径。缓存命中与术语表命中不消耗 API、不计入此统计"
+      );
+  }
+
+  /** 按基准价把输入/输出字符拆分折算为费用（比单字符口径更准；高峰价，空闲减半） */
+  private estimateCostSplit(inChars: number, outChars: number): string {
+    if (inChars <= 0 && outChars <= 0) return "¥0";
+    const inTok = Math.ceil(inChars / 4);
+    const outTok = Math.ceil(outChars / 2.5);
+    const yuan = inTok * 2e-6 + outTok * 8e-6; // 高峰时段价
+    if (yuan < 0.01) return "< ¥0.01（空闲半价）";
+    return `高峰 ≈ ¥${yuan.toFixed(2)}（空闲 ≈ ¥${(yuan / 2).toFixed(2)}）`;
   }
 
   /** 高级：过滤正则、术语表、批量参数、调试模式（4.5） */

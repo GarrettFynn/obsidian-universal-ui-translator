@@ -27,10 +27,12 @@ Obsidian 社区插件生态以英文为主，汉化依赖插件作者自觉。�
 
 - **四条拦截通道**：命令面板（含核心命令）、右键菜单、设置面板、MutationObserver 全局兜底（Notice、状态栏、Modal、自定义视图）
 - **五种翻译引擎**：OpenAI 兼容接口（含自定义 Base URL / 本地模型）、DeepL、Google Cloud Translation、Azure Translator、自定义 HTTP 端点（Ollama / LM Studio，零成本）
-- **本地缓存**：内存 LRU + 磁盘 JSON，键含原文 + 引擎 + 语言 + 模型——同一界面二次打开零 API 调用
+- **本地缓存**：内存 LRU + 磁盘 JSON 同一上限（默认 5 万条、可调至 20 万，磁盘另有 64MB 字节硬顶），键含原文 + 引擎 + 语言 + 模型——同一界面二次打开零 API 调用
 - **三种显示模式**：纯译文 / 双语对照 / 原文，随时切换，另有「临时显示原文/恢复译文」命令
 - **智能过滤**：跳过代码、路径、URL、数字、已本地化文本；占位符保护 + 译后校验（占位符不一致的译文直接丢弃、不进缓存）
-- **成本控制**：100ms 批量聚合、并发限制、单请求超时（可配置）、月度字符预算自动熔断、用量统计
+- **成本控制**：100ms 批量聚合、并发限制、单请求超时（可配置）、月度字符预算自动熔断
+- **用量统计图表（v1.1.9）**：「用量统计」分页按天记录送译条数与输入/输出字符，近 30 天柱状图 + 本月 tokens 与人民币费用估算，花了多少一目了然
+- **缓存治理（v1.1.9）**：缓存分页逐项写清"是什么 / 什么时候用 / 代价"——立即落盘、按当前引擎/语言/模型一键清理失效条目、磁盘文件实况、导出/导入共享
 - **作用域控制**：核心/社区开关、插件白名单/黑名单、拦截器独立开关、自定义跳过正则与术语表（固定译法优先于缓存与 API）
 - **社区插件市场按需翻译（核心功能）**：列表条目与详情面板（README 全文）各有「译」按钮，点哪条译哪条，缓存命中零成本——v1.1.5 起市场默认**不再**自动全量翻译（滚动列表会持续消耗 API），逐条按需是唯一推荐路径
 - **费用透明**：设置页逐项标注 API 消耗风险与量级估算（基准：DeepSeek flash 2026-09-10 新定价，人民币口径），用量统计附实时 tokens 与费用折算，月度字符预算超限自动熔断；完整折算模型见下方「费用估算」专节
@@ -87,6 +89,26 @@ DeepSeek flash 系列自 2026-09-10 12:00（北京时间）起的定价（每百
 
 **怎么用到接近零成本**：① 译文本地缓存，同一内容永不再发请求；② 设置页「月度字符预算」超限自动熔断；③ 术语表命中的词条不走 API；④ 用 Ollama 本地模型则完全免费、数据不出本机。
 
+### 用量统计与缓存管理（v1.1.9）
+
+**「用量统计」分页**（设置 → Universal UI Translator）回答"我到底调用了多少 API、烧了多少 tokens"：
+
+- **本月汇总**：送译条数、输入/输出字符、估算 tokens（入/出分列）、按 DeepSeek 基准价折算的人民币费用（高峰/空闲双口径）
+- **近 30 天柱状图**：每天一根堆叠条（下=输入、上=输出 tokens 估算），鼠标悬停查看当天精确数值；另有「今日 / 近 7 日」摘要
+- **口径说明**：tokens 由字符数折算（输入 ≈ 字符/4、输出 ≈ 字符/2.5），仅量级参考、非账单口径；**缓存命中与术语表命中不消耗 API、不计入此统计**；逐日明细自 v1.1.9 起记录（usage.json 向后兼容扩展，日桶保留近 62 天，月度预算判定口径不变）
+
+**「缓存」分页功能速查**（设置页内每个功能均为"是什么 / 什么时候用 / 代价"三段式说明）：
+
+| 功能 | 是什么 | 什么时候用 |
+| --- | --- | --- |
+| 启用本地缓存 | 译文持久化到 translation-cache.json，同一文本只付一次费 | 只有排查翻译异常时才需要关 |
+| 缓存条目上限 | 内存=磁盘同一容量（默认 5 万，可调 1000–20 万；磁盘另有 64MB 硬顶），超出淘汰最久未用条目 | 市场 README 翻得多就往宽设——纯文本不占空间，上限太低会提前淘汰译文、重复消耗 API；调小立即生效 |
+| 缓存统计 | 条数、命中率、磁盘文件实际大小、最后落盘时间 | 命中率越高越省钱 |
+| 立即落盘 | 新译文先在内存，每 30 秒检查一次（满 100 条或满 5 分钟）才写盘；点此立即写入磁盘 | 翻完一大批 README 后、关机/重启 Obsidian 前点一下；崩溃/强杀只会丢"上次落盘以来"的新译文，正常退出不受影响 |
+| 清理失效条目 | 删除与当前「引擎+语言+模型」不匹配的条目（缓存键含这三维，换模型后旧条目永不命中，纯占空间） | 换过模型/引擎/目标语言之后点一次；v1.1.9 前的旧条目无模型标记，只能按引擎+语言判定 |
+| 清空缓存 | 删除全部缓存译文并重置界面译态 | 译文异常（如嵌套乱码）排查、换术语表后重来；⚠️ 之后全部界面重译一遍（核心界面 ≈ ¥0.30 以内） |
+| 导出 / 导入 | 缓存与库根目录 JSON 文件互转（FR-12） | 换机迁移、把译文词表分享给他人（对方导入后零成本复用） |
+
 ### 免费额度教程：火山方舟「协作奖励计划」（每天用多少、次日返多少）
 
 火山引擎方舟平台的协作奖励计划：**授权推理接入点 → 当天产生的 token 用量，次日 11 点后以等额免费资源包形式返还，自动抵扣账单**——先记账、后抵扣，最终 0 元。个人实名账号单模型每日返还上限 50 万 tokens（本插件核心界面全量翻译一次性仅约 5 万 tokens，之后全部走缓存，日常用量远低于此上限）。
@@ -135,7 +157,7 @@ DeepSeek flash 系列自 2026-09-10 12:00（北京时间）起的定价（每百
 ```bash
 npm install
 npm run build          # tsc 类型检查 + esbuild（刻意不做 minify）
-npm test               # 149 个单元与集成测试
+npm test               # 159 个单元与集成测试
 npm run test:coverage  # 核心模块行覆盖率 75.9%–100%
 ```
 
@@ -157,10 +179,12 @@ The plugin ships **no translation engine or glossary of its own**. Translation q
 
 - **Four interception channels**: command palette (including core commands), context menus, settings panels, and a MutationObserver fallback for Notices, the status bar, modals and custom views
 - **Five translation providers**: OpenAI-compatible (incl. custom Base URL / local LLMs), DeepL, Google Cloud Translation, Azure Translator, and a fully custom HTTP endpoint (Ollama / LM Studio — zero cost)
-- **Local-first cache**: in-memory LRU + on-disk JSON, keyed by text + provider + language + model — opening the same UI twice issues zero API calls
+- **Local-first cache**: in-memory LRU + on-disk JSON under one shared cap (default 50k entries, adjustable up to 200k; 64 MB on-disk byte ceiling), keyed by text + provider + language + model — opening the same UI twice issues zero API calls
 - **Three display modes**: translated / bilingual (translation with original in brackets) / original, switchable anytime, plus a "临时显示原文/恢复译文" command
 - **Smart filtering**: skips code, paths, URLs, numbers and already-localized text; placeholder protection with post-translation validation (mismatched placeholders are discarded, never cached)
-- **Cost controls**: 100 ms batch aggregation, concurrency limit, per-request timeout (configurable), monthly character budget with automatic circuit-breaker, and usage statistics
+- **Cost controls**: 100 ms batch aggregation, concurrency limit, per-request timeout (configurable), monthly character budget with automatic circuit-breaker
+- **Usage dashboard (v1.1.9)**: the "用量统计" tab records daily call counts and input/output characters — a 30-day bar chart plus monthly token & cost estimates make spending obvious at a glance
+- **Cache governance (v1.1.9)**: the cache tab explains every action in a what/when/cost format — manual flush, one-click purge of entries that no longer match the current provider/language/model, on-disk file size, export/import sharing
 - **Scope control**: core/community toggles, per-plugin whitelist/blacklist, per-interceptor switches, custom skip-regexes and a user glossary (fixed translations that bypass cache and API)
 - **On-demand marketplace translation**: a "译" button on each community-plugin item translates just that entry — cache hits cost zero API calls
 - **Any target language**: defaults to `zh-CN`; set `ja` / `zh-Hant` / `ko` / `fr` or any language code — the cache is keyed per language, switch anytime
@@ -189,6 +213,16 @@ The plugin ships **no translation engine or glossary of its own**. Translation q
 
 Typical cost: **zero** — the free tiers of all major providers cover UI-text volumes, and local models cost only electricity.
 
+### Usage stats & cache management (v1.1.9)
+
+- The **用量统计 (Usage)** tab answers "how much API have I actually used": monthly totals (calls, input/output characters, estimated tokens and cost in CNY on the DeepSeek price basis), a 30-day stacked bar chart (hover any bar for exact figures), and today / last-7-day summaries. Tokens are character-based estimates (input ≈ chars/4, output ≈ chars/2.5), not billing figures; **cache and glossary hits cost no API calls and are not counted**. Daily detail is recorded from v1.1.9 onward (usage.json stays backward-compatible; day buckets are kept for 62 days; monthly-budget accounting is unchanged).
+- The **缓存 (Cache)** tab documents every action in a what / when-to-use / cost format:
+  - **缓存条目上限** — one shared memory+disk capacity (default 50k entries, adjustable 1k–200k; 64 MB disk byte ceiling). Translations are plain text and cheap to keep: set it wide so marketplace README translations are not evicted early and re-billed.
+  - **立即落盘 (Flush now)** — new translations live in memory and are written to disk on a 30 s check (at ≥100 pending entries or after 5 min), plus a forced flush on clean unload. Click it after a big README batch or before shutting down/restarting Obsidian; a crash only loses translations since the last flush (≤5 min).
+  - **清理失效条目 (Purge stale entries)** — deletes cache entries that no longer match your current provider + language + model. The cache key embeds all three, so after switching models the old entries can never hit again and only waste space. Entries written before v1.1.9 carry no model marker and are judged by provider + language only.
+  - **清空缓存 (Clear)** — wipes all cached translations and resets the UI translation state; everything retranslates once on next view (core UI ≈ ¥0.30).
+  - **导出 / 导入 (Export / Import)** — move the cache to/from a JSON file in the vault root for migration or sharing; the recipient reuses your translations at zero API cost.
+
 ### Security & privacy
 
 - No telemetry, no analytics, no outbound requests except the translation endpoint **you** configure
@@ -209,7 +243,7 @@ Typical cost: **zero** — the free tiers of all major providers cover UI-text v
 ```bash
 npm install
 npm run build          # tsc type-check + esbuild (deliberately not minified)
-npm test               # 149 unit & integration tests
+npm test               # 159 unit & integration tests
 npm run test:coverage  # core modules 75.9%–100% line coverage
 ```
 

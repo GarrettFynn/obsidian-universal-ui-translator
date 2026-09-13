@@ -213,7 +213,7 @@ describe("TranslationCoordinator 数据流（设计文档 3.2）", () => {
   it("翻译成功后按送译字符记录用量（4.5）", async () => {
     const stub = new StubProvider();
     const cache = new CacheManager(new MemoryIO(), "cache.json");
-    const recorded: number[] = [];
+    const recorded: Array<[number, number?]> = [];
     const coordinator = new TranslationCoordinator(
       new FilterEngine(),
       cache,
@@ -222,8 +222,8 @@ describe("TranslationCoordinator 数据流（设计文档 3.2）", () => {
         targetLang: "zh-CN",
         glossary: {},
         usageTracker: {
-          record: async (n) => {
-            recorded.push(n);
+          record: async (n, out) => {
+            recorded.push([n, out]);
           },
           isOverBudget: async () => false,
         },
@@ -231,7 +231,8 @@ describe("TranslationCoordinator 数据流（设计文档 3.2）", () => {
       }
     );
     expect(await coordinator.translate("Open Settings", CTX)).toBe("译:Open Settings");
-    expect(recorded).toEqual(["Open Settings".length]);
+    // v1.1.9：第二参为译文长度（用量统计分页输入/输出拆分）
+    expect(recorded).toEqual([["Open Settings".length, "译:Open Settings".length]]);
     // 缓存命中不重复计量
     expect(await coordinator.translate("Open Settings", CTX)).toBe("译:Open Settings");
     expect(recorded).toHaveLength(1);

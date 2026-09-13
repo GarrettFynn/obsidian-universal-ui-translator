@@ -60,6 +60,66 @@ describe("CacheManager", () => {
     expect(cm.stats().size).toBe(3);
   });
 
+  it("load 超限淘汰最旧条目（v1.1.9：磁盘上限缺省=内存上限；修复降序插入导致的 LRU 倒置）", async () => {
+    const io = new MemoryIO();
+    const t0 = Date.now();
+    io.files.set(
+      PATH,
+      JSON.stringify({
+        schemaVersion: 1,
+        entries: {
+          k1: entry("a", "p@1", t0 - 3000),
+          k2: entry("b", "p@1", t0 - 2000),
+          k3: entry("c", "p@1", t0 - 1000),
+        },
+      })
+    );
+    const cm = new CacheManager(io, PATH, 2);
+    await cm.load();
+    expect(cm.get("k1")).toBeNull(); // 最旧的被淘汰
+    expect(cm.get("k2")?.src).toBe("b");
+    expect(cm.get("k3")?.src).toBe("c");
+  });
+
+  it("setMaxEntries 热生效：调小立即淘汰最旧，调大允许继续增长（v1.1.9）", () => {
+    const cm = new CacheManager(new MemoryIO(), PATH, 3);
+    ["a", "b", "c"].forEach((s, i) => cm.set(`k${i}`, entry(s, "p@1", 1000 + i)));
+    cm.setMaxEntries(2);
+    expect(cm.stats().size).toBe(2);
+    expect(cm.get("k0")).toBeNull();
+    cm.setMaxEntries(4);
+    cm.set("k3", entry("d", "p@1", 1003));
+    cm.set("k4", entry("e", "p@1", 1004));
+    expect(cm.stats().size).toBe(4);
+  });
+
+  it("purgeMismatched：删除与当前 引擎/语言/模型 不匹配的条目并计数（v1.1.9 清理失效条目）", () => {
+    const cm = new CacheManager(new MemoryIO(), PATH);
+    cm.set("cur", { ...entry("Now"), model: "m1" });
+    cm.set("oldModel", { ...entry("OldModel"), model: "m0" });
+    cm.set("oldProvider", { ...entry("OldProvider"), provider: "deepl", model: "m1" });
+    cm.set("oldLang", { ...entry("OldLang"), lang: "ja", model: "m1" });
+    cm.set("legacy", entry("Legacy")); // 无 model 字段：按引擎+语言判定（与当前一致 → 保留）
+    expect(cm.purgeMismatched("openai", "zh-CN", "m1")).toBe(3);
+    expect(cm.get("cur")?.src).toBe("Now");
+    expect(cm.get("legacy")?.src).toBe("Legacy");
+    expect(cm.get("oldModel")).toBeNull();
+    expect(cm.get("oldProvider")).toBeNull();
+    expect(cm.get("oldLang")).toBeNull();
+  });
+
+  it("importEntries 透传 model 字段（v1.1.9 清理失效条目依赖模型标记）", () => {
+    const cm = new CacheManager(new MemoryIO(), PATH);
+    const n = cm.importEntries({
+      withModel: { ...entry("Has"), model: "m1" },
+      without: { src: "No", tgt: "译：No", provider: "openai", lang: "zh-CN" },
+    } as never);
+    expect(n).toBe(2);
+    // 换模型后清理：withModel（m1≠m2）被删；without 无模型标记按引擎+语言判定保留
+    expect(cm.purgeMismatched("openai", "zh-CN", "m2")).toBe(1);
+    expect(cm.get("without")?.src).toBe("No");
+  });
+
   it("stats.lastFlushAt：未落盘为 null，flush 后记录时间（v1.1.0 缓存页展示）", async () => {
     const cm = new CacheManager(new MemoryIO(), PATH, 5000, 20000, () => 1234567890);
     expect(cm.stats().lastFlushAt).toBeNull();
@@ -130,23 +190,23 @@ describe("CacheManager", () => {
     expect(cm.get("garbage")).toBeNull();
   });
 
-  it("v1.1.5 体积防护：flush 按 8MB 字节硬顶截断（条数上限之外的第二道闸）", async () => {
+  it("v1.1.5 体积防护：flush 按字节硬顶截断（条数上限之外的第二道闸；v1.1.9 硬顶 8MB→64MB）", async () => {
     const io = new MemoryIO();
     const cm = new CacheManager(io, PATH, 200000, 200000); // 放开条数上限，专测字节闸
-    // 每条约 3.2KB（src 1500 + tgt 1500 + 结构开销），8MB 约容 2500 条；写 3000 条必截断
-    for (let i = 0; i < 3000; i++) {
+    // 每条约 3.9KB（src 1900 + tgt 1900 + 结构开销），64MB 约容 1.7 万条；写 17500 条必截断
+    for (let i = 0; i < 17500; i++) {
       cm.set(`k${String(i).padStart(5, "0")}`, {
-        ...entry("s".repeat(1500), "p@1", 1000 + i),
-        tgt: "t".repeat(1500),
+        ...entry("s".repeat(1900), "p@1", 1000 + i),
+        tgt: "t".repeat(1900),
       });
     }
     await cm.flush();
     const file = JSON.parse(io.files.get(PATH)!) as { entries: Record<string, { updatedAt: number }> };
     const keys = Object.keys(file.entries);
-    expect(keys.length).toBeLessThan(3000);
-    expect(keys.length).toBeGreaterThan(2000); // 确实容下了数千条（非误杀）
+    expect(keys.length).toBeLessThan(17500);
+    expect(keys.length).toBeGreaterThan(15000); // 确实容下了上万条（非误杀）
     // 保留的是 updatedAt 最新的一批（最旧的 k00000 被淘汰）
-    expect(file.entries["k02999"]).toBeTruthy();
+    expect(file.entries["k17499"]).toBeTruthy();
     expect(file.entries["k00000"]).toBeUndefined();
   });
 

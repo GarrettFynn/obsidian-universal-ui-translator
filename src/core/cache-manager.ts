@@ -13,14 +13,18 @@ export interface CacheStats {
 const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
 /** v1.1.5 单条目字符上限（src+tgt）：UI 文本远低于 2KB，失控嵌套产物单条可达数 MB（540MB 缓存事故防线） */
 const MAX_ENTRY_CHARS = 4000;
-/** v1.1.5 磁盘文件总字节预算（近似）：条数上限之外的硬顶，超出按 updatedAt 从旧到新淘汰 */
-const DISK_MAX_BYTES = 8 * 1024 * 1024;
+/** 磁盘文件总字节预算（近似）：条数上限之外的硬顶，超出按 updatedAt 从旧到新淘汰
+ *  （v1.1.5 设 8MB；v1.1.9 上调 64MB——540MB 事故根因是嵌套失控产物，已由单条 4000 字符防线根治；
+ *  64MB 仍低于 GitHub 100MB 单文件限制） */
+const DISK_MAX_BYTES = 64 * 1024 * 1024;
 
 /**
  * 缓存管理（设计文档 4.2.3）
  * - 键：sha256(原文 + providerId + targetLang + model) 取前 16 位十六进制，
  *   多引擎 / 多语言 / 多模型互不污染；Node crypto 同步计算，不走异步 crypto.subtle
- * - 内存 Map + LRU（默认上限 5000）；磁盘 JSON（默认上限 20000 条 + 8MB 字节硬顶，超限按 updatedAt 最旧淘汰）
+ * - 内存 Map + LRU 与磁盘 JSON 同一容量上限（默认 50000 条，设置页可调 1000–200000）；磁盘另有
+ *   64MB 字节硬顶，超限均按 updatedAt 最旧淘汰（v1.1.9 单容量——原"内存 5000 / 磁盘 20000"
+ *   双层因 flush 只写内存而不可达）
  * - v1.1.5 体积防护：单条目 src+tgt 超 4000 字符拒绝写入 / load 时剔除（嵌套失控产物曾达 540MB）
  * - 版本维度：get 传入 currentFrom（pluginId@version / core@appVersion），不符即惰性失效
  * - 90 天未命中的条目在 load 时清理
@@ -45,8 +49,9 @@ export class CacheManager {
   constructor(
     private io: TextFileIO,
     private filePath: string,
-    private maxEntries = 5000,
-    private diskMaxEntries = 20000,
+    private maxEntries = 20000,
+    /** 缺省与 maxEntries 同值（v1.1.9 单容量）；独立传值仅用于测试磁盘截断 */
+    private diskMaxEntries = maxEntries,
     private now: () => number = () => Date.now(),
     /** 版本迁移表：键为目标版本号（migrations[1] 把 v0 迁到 v1）；当前为空（v1 起步，框架预留） */
     private migrations: Record<number, (file: CacheFile) => CacheFile> = {}
@@ -55,6 +60,13 @@ export class CacheManager {
   /** 待落盘新条目数（配合「累计 100 条批量写入」策略） */
   get pendingWrites(): number {
     return this.dirtyCount;
+  }
+
+  /** v1.1.9：运行时调整容量上限（内存=磁盘同值，设置页热生效）；调小立即淘汰最旧条目 */
+  setMaxEntries(n: number): void {
+    this.maxEntries = n;
+    this.diskMaxEntries = n;
+    this.evictIfNeeded();
   }
 
   async load(): Promise<void> {
@@ -84,7 +96,9 @@ export class CacheManager {
       // v1.1.5：超大条目在 load 时剔除——旧版本嵌套失控产物的垃圾条目由此自动自愈（flush 后文件即瘦身）
       .filter(([, e]) => e.updatedAt >= cutoff && e.src.length + e.tgt.length <= MAX_ENTRY_CHARS)
       .sort(([, a], [, b]) => b.updatedAt - a.updatedAt)
-      .slice(0, this.diskMaxEntries);
+      .slice(0, this.diskMaxEntries)
+      // v1.1.9：截断后反转为升序插入（最旧在 Map 头部）——此前降序插入使淘汰先删最新条目（LRU 倒置）
+      .reverse();
     for (const [key, e] of entries) {
       this.mem.set(key, e);
     }
@@ -176,6 +190,27 @@ export class CacheManager {
   }
 
   /**
+   * v1.1.9：清理与当前 引擎+语言+模型 不匹配的条目——缓存键含这三个维度，
+   * 换过模型/引擎后旧条目永远不会再命中，纯占空间。无 model 字段的旧条目按引擎+语言判定。
+   * 返回删除条数（计入待落盘，由调用方 flush）
+   */
+  purgeMismatched(provider: string, lang: string, model: string): number {
+    let removed = 0;
+    for (const [key, e] of [...this.mem.entries()]) {
+      if (
+        e.provider !== provider ||
+        e.lang !== lang ||
+        (e.model !== undefined && e.model !== model)
+      ) {
+        this.mem.delete(key);
+        removed++;
+      }
+    }
+    if (removed > 0) this.dirtyCount += removed;
+    return removed;
+  }
+
+  /**
    * 导入缓存条目（4.5 缓存 Tab 导入；FR-12 用户间共享词表）
    * 逐条校验结构（src/tgt 为非空字符串），非法条目跳过；返回实际导入条数
    */
@@ -192,6 +227,8 @@ export class CacheManager {
           tgt: e.tgt,
           provider: typeof e.provider === "string" ? e.provider : "imported",
           lang: typeof e.lang === "string" ? e.lang : "",
+          // v1.1.9：透传模型标记（清理失效条目按模型判定）
+          ...(typeof e.model === "string" ? { model: e.model } : {}),
           from: typeof e.from === "string" ? e.from : "",
           hits: typeof e.hits === "number" ? e.hits : 0,
           updatedAt: typeof e.updatedAt === "number" ? e.updatedAt : Date.now(),

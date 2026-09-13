@@ -91,3 +91,94 @@
   font-size: 12px;
   line-height: 1.6;
 }
+
+
+/* ===== v1.1.9 用量统计分页：汇总卡片与近 30 天柱状图（纯 DOM/CSS，零依赖） ===== */
+
+.uut-usage-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 12px;
+}
+
+.uut-usage-card {
+  flex: 1 1 110px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.uut-usage-card-label {
+  font-size: 0.8em;
+  color: var(--text-muted);
+}
+
+.uut-usage-card-value {
+  font-size: 1.15em;
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+.uut-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 120px;
+  padding-top: 4px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.uut-chart-bar {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.uut-chart-in {
+  background: var(--interactive-accent);
+  opacity: 0.8;
+  border-radius: 2px 2px 0 0;
+}
+
+.uut-chart-out {
+  background: var(--text-accent);
+  opacity: 0.45;
+}
+
+.uut-chart-axis {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75em;
+  color: var(--text-faint);
+  margin-top: 2px;
+}
+
+.uut-chart-legend {
+  display: flex;
+  gap: 16px;
+  font-size: 0.8em;
+  color: var(--text-muted);
+  margin-top: 6px;
+}
+
+.uut-chart-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 4px;
+  vertical-align: -1px;
+}
+
+.uut-swatch-in {
+  background: var(--interactive-accent);
+}
+
+.uut-swatch-out {
+  background: var(--text-accent);
+  opacity: 0.45;
+}

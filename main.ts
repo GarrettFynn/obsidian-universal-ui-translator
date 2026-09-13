@@ -102,6 +102,8 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     this.cache = new CacheManager(
       this.io,
       `${pluginDir}/translation-cache.json`,
+      // v1.1.9：内存=磁盘同上限（原双层设计的磁盘侧因 flush 只写内存而不可达）
+      this.settings.cacheMaxEntries,
       this.settings.cacheMaxEntries
     );
     await this.cache.load();
@@ -238,9 +240,49 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     this.commandPatcher?.resetRuntimeTranslations();
   }
 
-  /** 本月已发送字符数（4.5 用量展示） */
+  /** 本月已发送字符数（4.5 用量展示；月度预算同口径） */
   async monthlyUsage(): Promise<number> {
     return this.usageTracker.monthChars();
+  }
+
+  /** 用量统计分页（v1.1.9）：近 N 天逐日明细（送译条数 + 输入/输出字符，缺日补零） */
+  async getUsageDaily(days: number) {
+    return this.usageTracker.dailyStats(days);
+  }
+
+  /** 用量统计分页（v1.1.9）：本月日桶合计（逐日明细自 v1.1.9 起记录，历史月份只有月累计） */
+  async getUsageMonthStats() {
+    return this.usageTracker.monthStats();
+  }
+
+  /** 缓存 Tab 实况（v1.1.9）：磁盘缓存文件字节数；文件不存在或读取失败返回 null */
+  async cacheFileBytes(): Promise<number | null> {
+    try {
+      const st = await this.app.vault.adapter.stat(
+        `${this.manifest.dir}/translation-cache.json`
+      );
+      return st?.size ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** 缓存 Tab「清理失效条目」（v1.1.9）：删除与当前 引擎+语言+模型 不匹配的条目（换模型后旧条目永不命中） */
+  async purgeStaleCacheEntries(): Promise<{ ok: boolean; message: string }> {
+    if (!this.provider) {
+      return { ok: false, message: "未配置翻译引擎，无法判定当前配置，未做任何清理" };
+    }
+    const model = (this.provider as { modelId?: string }).modelId ?? "";
+    const removed = this.cache.purgeMismatched(
+      this.provider.id,
+      this.settings.targetLang,
+      model
+    );
+    await this.cache.flush();
+    return {
+      ok: true,
+      message: `已清理 ${removed} 条与当前引擎/语言/模型不匹配的缓存条目`,
+    };
   }
 
   /** 缓存 Tab「立即落盘」（v1.1.5）：不等 30s/100 条/5 分钟保底策略，立即把内存缓存写入磁盘 */
@@ -316,6 +358,8 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     // v1.1.5：过滤器热同步——目标语言（规则 5c 嵌套防线）与跳过正则（此前改完不生效，需重启）
     this.filter.setTargetLang(this.settings.targetLang);
     this.filter.setSkipPatterns(this.settings.skipPatterns);
+    // v1.1.9：缓存容量上限热生效（调小立即淘汰最旧条目）
+    this.cache.setMaxEntries(this.settings.cacheMaxEntries);
     // v1.1.0：配置变更即重置熔断/负缓存与运行时译态，并全量重扫已渲染界面——修复"改完配置要重启才生效"
     this.coordinator.resetFailures();
     this.commandPatcher?.resetRuntimeTranslations();

@@ -39,7 +39,8 @@ export interface CoordinatorOptions {
   translateVia?: (masked: string, context?: string) => Promise<string>;
   /** 用量统计（4.5，装配层注入 UsageTracker）；缺省时不计量 */
   usageTracker?: {
-    record(chars: number): Promise<void>;
+    /** chars=送译字符数；outChars=译文长度（v1.1.9 逐日明细输入/输出拆分） */
+    record(chars: number, outChars?: number): Promise<void>;
     isOverBudget(budget: number | null): Promise<boolean>;
   };
   /** 月度字符预算（4.5）；null/缺省为不限 */
@@ -131,9 +132,9 @@ export class TranslationCoordinator {
       const raw = this.options.translateVia
         ? await this.options.translateVia(masked, context)
         : await provider.translate(masked, { context });
-      // 按送译字符计量（4.5 用量统计；异步落盘失败不影响主流程）
-      void this.options.usageTracker?.record(masked.length);
       const restored = FilterEngine.restorePlaceholders(raw.trim(), tokens);
+      // 按送译字符计量（4.5 用量统计；异步落盘失败不影响主流程）；v1.1.9：译文长度作输出字符
+      void this.options.usageTracker?.record(masked.length, restored.length);
       if (!FilterEngine.placeholdersIntact(text, restored)) {
         // 占位符被改写：丢弃译文、回退原文、不写缓存
         return { text, outcome: "failed", error: "译文占位符被改写" };
@@ -144,6 +145,8 @@ export class TranslationCoordinator {
           tgt: restored,
           provider: provider.id,
           lang: this.options.targetLang,
+          // v1.1.9：缓存键已含模型维度，条目冗余一份供「清理失效条目」按模型判定
+          model,
           from,
           hits: 0,
           updatedAt: this.now(),
