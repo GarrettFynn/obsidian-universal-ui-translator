@@ -5,6 +5,9 @@
 
 [中文](#中文) · [English](#english)
 
+> **问题反馈 / Feedback**：使用中遇到任何问题（翻译异常、功能建议、Bug）请发邮件至 **[ganmuyun@foxmail.com](mailto:ganmuyun@foxmail.com)**——请附上 Obsidian 版本、插件版本与控制台报错截图，便于定位。
+> Found a bug or have a suggestion? Email **[ganmuyun@foxmail.com](mailto:ganmuyun@foxmail.com)** — please include your Obsidian version, plugin version and any console errors.
+
 [![GitHub release](https://img.shields.io/github/v/release/GarrettFynn/obsidian-universal-ui-translator)](https://github.com/GarrettFynn/obsidian-universal-ui-translator/releases)
 [![Build](https://github.com/GarrettFynn/obsidian-universal-ui-translator/actions/workflows/release.yml/badge.svg)](https://github.com/GarrettFynn/obsidian-universal-ui-translator/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
