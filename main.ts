@@ -157,7 +157,9 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     this.usageBarItem = this.addStatusBarItem();
     this.usageBarItem.setAttr("data-uut", "usage");
     this.usageBarItem.toggleClass("uut-hidden", true);
-    this.registerInterval(window.setInterval(() => this.updateUsageStatusBar(), 1000));
+    this.registerInterval(
+      window.setInterval(() => void this.updateUsageStatusBar(), 1000)
+    );
     this.batcher = new BatchTranslator(() => this.provider, {
       windowMs: this.settings.batchWindowMs,
       concurrency: this.settings.maxConcurrentRequests,

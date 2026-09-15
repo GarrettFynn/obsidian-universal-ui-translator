@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2] - 2026-09-15
+
+官方目录自动审查合规修复：1.3.1 因 manifest 描述含禁用词 "Obsidian"（目录上下文冗余）被判 Failed。顺手清零三处低成本警告；跨窗口 createElement 与声明式设置为有意设计/另行排期，未动。
+
+### Fixed
+
+- **审查 Error：描述含 "Obsidian"**：manifest 描述去除该词（目录上下文已隐含），其余能力表述不变
+
+### Changed
+
+- 审查告警清理：`setInterval`/click 监听回调的 Promise 返回改 `void`（main.ts / settings-tab.ts 两处）；删除 renderUsage 重写遗留的未用变量 `toTok`
+
 ## [1.3.1] - 2026-09-15
 
 用户实测反馈修复：token 单价设置从未生效；社区市场弹窗内无任何 token 消耗视图。

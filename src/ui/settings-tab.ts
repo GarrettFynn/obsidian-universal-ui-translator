@@ -533,8 +533,6 @@ export class UutSettingTab extends PluginSettingTab {
     const inTok = Math.ceil(month.inChars / 4);
     const outTok = Math.ceil(month.outChars / 2.5);
     const cost = this.estimateCostSplit(month.inChars, month.outChars);
-    const toTok = (d: { inChars: number; outChars: number }) =>
-      Math.ceil(d.inChars / 4) + Math.ceil(d.outChars / 2.5);
 
     // v1.3 口径标注：让"实测"与"折算估算"的边界一目了然
     new Setting(el).setName("计费口径").setDesc(
@@ -602,9 +600,9 @@ export class UutSettingTab extends PluginSettingTab {
     ] as const) {
       const btn = toggle.createDiv(`uut-tab${this.usageChartBasis === id ? " uut-tab-active" : ""}`);
       btn.textContent = label;
-      btn.addEventListener("click", async () => {
+      btn.addEventListener("click", () => {
         this.usageChartBasis = id;
-        await this.renderTabs();
+        void this.renderTabs();
       });
     }
     const chart = el.createDiv("uut-chart");
