@@ -506,3 +506,125 @@ describe("v1.1.8 复查补强：兄弟锁定 / 显示原文模式 / 部分游离
     expect(notices).toHaveLength(0);
   });
 });
+
+describe("v1.2 P1 翻译进度：按钮计数与悬浮进度条", () => {
+  const patchers: MarketplacePatcher[] = [];
+  afterEach(() => {
+    for (const p of patchers.splice(0)) p.deactivate();
+    document.body.innerHTML = "";
+  });
+
+  it("在途按钮显示 settled/total、浮条显示聚合进度；完成后浮条显示 ✓ 并在 1.5s 后移除", async () => {
+    let release: () => void = () => undefined;
+    const coord = {
+      translateWithOutcome: async (t: string) => {
+        await new Promise<void>((r) => (release = r)); // 手动控制结算时机
+        return { text: `译:${t}`, outcome: "translated" as const };
+      },
+    } as unknown as TranslationCoordinator;
+    const p = new MarketplacePatcher(coord, (t) => t);
+    patchers.push(p);
+    const item = makeItem("Super Plugin");
+    p.activate();
+    const btn = item.querySelector(":scope > .uut-mkt-btn") as HTMLButtonElement;
+    btn.click();
+    await tick();
+    // 一级：按钮确定型计数（0/1 起步）
+    expect(btn.textContent).toBe("0/1");
+    expect(btn.classList.contains("uut-mkt-progressing")).toBe(true);
+    // 二级：浮条已创建，0 档宽度
+    const overlay = document.querySelector(".uut-mkt-progress") as HTMLElement;
+    expect(overlay).toBeTruthy();
+    expect(overlay.getAttribute("data-no-translate")).toBe("true");
+    expect(overlay.querySelector(".uut-mkt-progress-fill")!.className).toContain("uut-p-0");
+    release();
+    await tick();
+    expect(btn.textContent).toBe("✓1"); // 终态反馈不变
+    expect(btn.classList.contains("uut-mkt-progressing")).toBe(false);
+    expect(overlay.textContent).toContain("已完成");
+    expect(overlay.classList.contains("uut-mkt-progress-done")).toBe(true); // v1.3 F1：完成即淡出
+    await new Promise((r) => setTimeout(r, 800));
+    expect(document.querySelector(".uut-mkt-progress")).toBeNull(); // 0.6s 后移除
+  });
+
+  it("多趟并发聚合：两个条目同时翻译时浮条显示合计进度", async () => {
+    const releases: Array<() => void> = [];
+    const coord = {
+      translateWithOutcome: async (t: string) => {
+        await new Promise<void>((r) => releases.push(r));
+        return { text: `译:${t}`, outcome: "translated" as const };
+      },
+    } as unknown as TranslationCoordinator;
+    const p = new MarketplacePatcher(coord, (t) => t);
+    patchers.push(p);
+    const itemA = makeItem("Plugin Alpha");
+    const itemB = makeItem("Plugin Beta");
+    p.activate();
+    (itemA.querySelector(":scope > .uut-mkt-btn") as HTMLButtonElement).click();
+    (itemB.querySelector(":scope > .uut-mkt-btn") as HTMLButtonElement).click();
+    await tick();
+    const overlay = document.querySelector(".uut-mkt-progress") as HTMLElement;
+    expect(overlay.textContent).toContain("0/2");
+    releases[0]();
+    await tick();
+    expect(overlay.textContent).toContain("1/2");
+    expect(overlay.querySelector(".uut-mkt-progress-fill")!.className).toContain("uut-p-5");
+    releases[1]();
+    await tick();
+    expect(overlay.textContent).toContain("已完成");
+  });
+
+  it("无送译目标（文本全为 <2 字符）不创建浮条，按钮直接进入终态", async () => {
+    const coord = {
+      translateWithOutcome: async (t: string) => ({ text: t, outcome: "filtered" as const }),
+    } as unknown as TranslationCoordinator;
+    const p = new MarketplacePatcher(coord, (t) => t);
+    patchers.push(p);
+    const item = makeItem("x"); // 单字符：不过 <2 拒译线，零送译目标
+    p.activate();
+    const btn = item.querySelector(":scope > .uut-mkt-btn") as HTMLButtonElement;
+    btn.click();
+    await tick();
+    expect(btn.textContent).toBe("✓");
+    expect(document.querySelector(".uut-mkt-progress")).toBeNull();
+  });
+
+  it("deactivate 移除浮条并清除计时器（卸载零残留）", async () => {
+    const coord = {
+      translateWithOutcome: async () => {
+        await new Promise<void>(() => undefined); // 永不结算，保持浮条在途
+        return { text: "", outcome: "translated" as const };
+      },
+    } as unknown as TranslationCoordinator;
+    const p = new MarketplacePatcher(coord, (t) => t);
+    const item = makeItem("Super Plugin");
+    p.activate();
+    (item.querySelector(":scope > .uut-mkt-btn") as HTMLButtonElement).click();
+    await tick();
+    expect(document.querySelector(".uut-mkt-progress")).toBeTruthy();
+    p.deactivate();
+    expect(document.querySelector(".uut-mkt-progress")).toBeNull();
+  });
+
+  it("v1.3.1：弹窗（adoptDocument）创建常驻用量徽标，主文档不创建；setUsageLine 更新/隐藏；deactivate 移除", async () => {
+    const p = new MarketplacePatcher(stubCoordinator(), (t) => t);
+    patchers.push(p);
+    p.activate();
+    // 主文档：状态栏承担，不建徽标
+    expect(document.querySelector(".uut-mkt-usage")).toBeNull();
+    const doc = document.implementation.createHTMLDocument("市场弹窗");
+    doc.body.innerHTML = '<div class="community-item"><div class="community-item-name">Plugin X</div></div>';
+    p.adoptDocument(doc);
+    const badge = doc.querySelector(".uut-mkt-usage") as HTMLElement;
+    expect(badge).toBeTruthy();
+    expect(badge.getAttribute("data-no-translate")).toBe("true");
+    expect(badge.classList.contains("uut-hidden")).toBe(true); // 有数据前隐藏
+    p.setUsageLine("UUT 今日 1.2k tok · ≈¥0.03");
+    expect(badge.textContent).toContain("1.2k");
+    expect(badge.classList.contains("uut-hidden")).toBe(false);
+    p.setUsageLine(null); // 设置关闭 → 隐藏
+    expect(badge.classList.contains("uut-hidden")).toBe(true);
+    p.deactivate();
+    expect(doc.querySelector(".uut-mkt-usage")).toBeNull();
+  });
+});

@@ -2,7 +2,8 @@
  * Provider 统一抽象（设计文档 4.3.1）
  * - HTTP 约定：所有 Provider 的网络请求统一走 HttpClient 抽象——真实环境由装配层
  *   对接 Obsidian requestUrl（规避 CORS、符合审核规范），单元测试注入 mock
- * - translateBatch 默认实现：受控并发逐条翻译；支持原生批量的子类覆盖
+ * - translateBatch 默认实现：全量并发逐条翻译保序；支持原生批量的子类覆盖
+ *   （真实在途上限由装配层 http 信号量统一封顶，A2）
  */
 export interface HttpRequest {
   url: string;
@@ -38,18 +39,19 @@ export abstract class TranslationProvider {
 
   abstract translate(text: string, ctx?: { context?: string }): Promise<string>;
 
-  /** 默认实现：受控并发（上限 3）逐条翻译，保持返回顺序与输入一致 */
+  /**
+   * 默认实现：全量并发逐条翻译、按下标回填保序（综合改进设计 A2）
+   * 真实在途请求数由装配层 http 包装层的全局信号量统一封顶（main.ts 注入
+   * maxConcurrentRequests）——本层不再自带内层并发上限，避免与外层批次并发
+   * 相乘导致真实在途数失控（原实现内层硬编码 3：设置并发 5 实际 15 路）
+   */
   async translateBatch(texts: string[]): Promise<string[]> {
-    const limit = 3;
     const out: string[] = new Array<string>(texts.length);
-    let i = 0;
-    const workers = Array.from({ length: Math.min(limit, texts.length) }, async () => {
-      while (i < texts.length) {
-        const cur = i++;
-        out[cur] = await this.translate(texts[cur]);
-      }
-    });
-    await Promise.all(workers);
+    await Promise.all(
+      texts.map(async (t, i) => {
+        out[i] = await this.translate(t);
+      })
+    );
     return out;
   }
 

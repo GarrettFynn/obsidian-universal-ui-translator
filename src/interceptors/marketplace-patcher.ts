@@ -28,6 +28,15 @@ export class MarketplacePatcher {
   private rescanInterval: number | null = null;
   /** v1.1.8：失败 Notice 去抖（同一原因 30 秒内不重复弹） */
   private noticeAt = new Map<string, number>();
+  /** v1.2 P1 二级：每文档在途翻译趟注册表与悬浮进度条（聚合显示 settled/total） */
+  private activeProgress = new Map<Document, Set<{ settled: number; total: number }>>();
+  private progressEls = new Map<
+    Document,
+    { root: HTMLElement; label: HTMLElement; fill: HTMLElement }
+  >();
+  private progressTimers = new Map<Document, number>();
+  /** v1.3.1：弹窗常驻用量徽标（市场浏览器为独立窗口，主窗口状态栏不可见——唯一消耗视图） */
+  private usageEls = new Map<Document, HTMLElement>();
 
   constructor(
     private coordinator: TranslationCoordinator,
@@ -57,10 +66,20 @@ export class MarketplacePatcher {
       this.rescanInterval = null;
     }
     for (const doc of this.documents) {
-      doc.querySelectorAll(".uut-mkt-btn, .uut-mkt-detail-btn").forEach((b) => b.remove());
+      doc
+        .querySelectorAll(".uut-mkt-btn, .uut-mkt-detail-btn, .uut-mkt-progress, .uut-mkt-usage")
+        .forEach((b) => b.remove());
       // v1.1.5：只清本通道打的 mkt 标记（[data-uut] 另有状态栏等其他用途）
       doc.querySelectorAll('[data-uut="mkt"]').forEach((el) => el.removeAttribute("data-uut"));
     }
+    // v1.2 P1：进度条计时器与注册表清空（弹窗窗口的计时器须经其 defaultView 清除）
+    for (const [doc, timer] of this.progressTimers) {
+      (doc.defaultView ?? window).clearTimeout(timer);
+    }
+    this.progressTimers.clear();
+    this.progressEls.clear();
+    this.activeProgress.clear();
+    this.usageEls.clear();
     this.documents.clear();
     this.noticeAt.clear();
   }
@@ -70,6 +89,35 @@ export class MarketplacePatcher {
     if (!doc.body || this.documents.has(doc)) return;
     this.observeDocument(doc);
     this.injectButtons(doc);
+    // v1.3.1：弹窗创建常驻用量徽标（主文档不创建——主窗口已有状态栏承担）
+    this.ensureUsageBadge(doc);
+  }
+
+  /**
+   * v1.3.1：更新全部弹窗徽标的用量文案（供 main.ts 1Hz 供数调用）
+   * text 为 null 时隐藏（设置关闭/引擎未配置等）
+   */
+  setUsageLine(text: string | null): void {
+    for (const [doc, el] of this.usageEls) {
+      if (!el.isConnected) {
+        this.usageEls.delete(doc);
+        continue;
+      }
+      el.textContent = text ?? "";
+      el.classList.toggle("uut-hidden", text === null);
+    }
+  }
+
+  /** v1.3.1：确保弹窗存在常驻用量徽标（R-30 跨 realm：由目标 doc 自建） */
+  private ensureUsageBadge(doc: Document): void {
+    if (this.usageEls.has(doc)) return;
+    const el = doc.createElement("div");
+    el.className = "uut-mkt-usage";
+    el.setAttribute("data-uut", "usage");
+    el.setAttribute("data-no-translate", "true");
+    el.classList.add("uut-hidden"); // 有数据时由 setUsageLine 显示
+    doc.body.appendChild(el);
+    this.usageEls.set(doc, el);
   }
 
   private rescanDocuments(): void {
@@ -174,8 +222,12 @@ export class MarketplacePatcher {
   ): Promise<void> {
     btn.textContent = "…";
     btn.setAttribute("disabled", "true");
+    btn.classList.add("uut-mkt-progressing");
     try {
-      const stats = await this.translatePass(item, skipClosest);
+      // v1.2 P1 一级：按钮内确定型进度（开译即知总量——translatePass 先收集后送译）
+      const stats = await this.translatePass(item, skipClosest, (settled, total) => {
+        if (btn.isConnected && total > 0) btn.textContent = `${settled}/${total}`;
+      });
       // 自动补救：存在游离节点（翻译途中详情区被重渲染）且根容器仍存活 → 重跑一次：
       // 重生节点带着原文出现，译文已进缓存，本次为零成本回写（部分游离同样补救——
       // 否则用户看到中英夹杂需要再点一次）
@@ -220,13 +272,19 @@ export class MarketplacePatcher {
       btn.textContent = "译";
     } finally {
       btn.removeAttribute("disabled");
+      btn.classList.remove("uut-mkt-progressing");
     }
   }
 
-  /** 单趟收集 + 并行送译 + 回写；返回分类统计供调用方决定反馈与是否重试 */
+  /**
+   * 单趟收集 + 并行送译 + 回写；返回分类统计供调用方决定反馈与是否重试
+   * v1.2 P1：可选 onSettle 进度回调——分母为送译节点总数（先收集后送译，开译即知），
+   * 分子在每个节点任意结局（成功/失败/游离/模式抑制）结算时递增，确定型不回退
+   */
   private async translatePass(
     item: HTMLElement,
-    skipClosest?: string
+    skipClosest?: string,
+    onSettle?: (settled: number, total: number) => void
   ): Promise<{
     done: number;
     detached: number;
@@ -251,6 +309,14 @@ export class MarketplacePatcher {
       nodes.push(cur as Text);
       cur = walker.nextNode();
     }
+    // P1：先过滤出送译目标（与下方 <2 拒译同口径）——总量开译即知，支撑确定型进度
+    const targets = nodes.filter((n) => (n.nodeValue ?? "").trim().length >= 2);
+    const total = targets.length;
+    let settled = 0;
+    // P1 二级：注册到悬浮进度条（总量为 0 不注册——避免无意义闪烁）
+    const progress = total > 0 ? this.beginProgress(doc, total) : null;
+    if (progress) this.renderProgress(doc);
+    onSettle?.(0, total);
     let done = 0;
     let detached = 0;
     let modeSuppressed = 0;
@@ -260,49 +326,58 @@ export class MarketplacePatcher {
     // 否则同父兄弟部分失败时父元素被打标，TreeWalker 跳过 [data-uut] 祖先，失败节点永久锁死
     const tally = new Map<Element, { total: number; ok: number }>();
     await Promise.all(
-      nodes.map(async (node) => {
+      targets.map(async (node) => {
         const original = node.nodeValue ?? "";
         const trimmed = original.trim();
-        if (trimmed.length < 2) return;
-        const parent = node.parentElement;
-        let t: { total: number; ok: number } | null = null;
-        if (parent) {
-          t = tally.get(parent) ?? { total: 0, ok: 0 };
-          t.total++;
-          tally.set(parent, t);
-        }
-        // v1.1.8：手动点击 = 显式重试意图，绕过 5 分钟负缓存（熔断/预算仍强制——钱包保护不动）
-        const res = await this.coordinator.translateWithOutcome(
-          trimmed,
-          { source: "dom", pluginId: "marketplace" },
-          { bypassNegativeCache: true }
-        );
-        outcomes.push(res.outcome);
-        if (res.outcome === "failed") {
-          firstError ??= res.error;
-          return; // 不计 ok：父元素不打标，下次点击可重试
-        }
-        const formatted = this.format(res.text, trimmed);
-        if (formatted === null || formatted === trimmed) {
-          if (formatted === null && res.text !== trimmed) {
-            // 「临时显示原文」模式：译文已缓存但不回写；不计 ok——恢复显示后点击应能回写
-            modeSuppressed++;
-          } else if (t) {
-            t.ok++; // 译文即原文（过滤/缓存同文）：无需重试，计完成
+        try {
+          const parent = node.parentElement;
+          let t: { total: number; ok: number } | null = null;
+          if (parent) {
+            t = tally.get(parent) ?? { total: 0, ok: 0 };
+            t.total++;
+            tally.set(parent, t);
           }
-          return;
+          // v1.1.8：手动点击 = 显式重试意图，绕过 5 分钟负缓存（熔断/预算仍强制——钱包保护不动）
+          const res = await this.coordinator.translateWithOutcome(
+            trimmed,
+            { source: "dom", pluginId: "marketplace" },
+            { bypassNegativeCache: true }
+          );
+          outcomes.push(res.outcome);
+          if (res.outcome === "failed") {
+            firstError ??= res.error;
+            return; // 不计 ok：父元素不打标，下次点击可重试
+          }
+          const formatted = this.format(res.text, trimmed);
+          if (formatted === null || formatted === trimmed) {
+            if (formatted === null && res.text !== trimmed) {
+              // 「临时显示原文」模式：译文已缓存但不回写；不计 ok——恢复显示后点击应能回写
+              modeSuppressed++;
+            } else if (t) {
+              t.ok++; // 译文即原文（过滤/缓存同文）：无需重试，计完成
+            }
+            return;
+          }
+          // 5.2 回写前存活检查（v1.1.8 补齐，此前漏实现）：详情区重渲染后节点游离，
+          // 译文已入缓存，放弃回写（由调用方视情况自动重试）；不计 ok
+          if (!node.isConnected) {
+            detached++;
+            return;
+          }
+          node.nodeValue = original.replace(trimmed, formatted);
+          // v1.1.5 嵌套乱码修复：登记回写（DOMPatcher 不再重送）
+          this.onWriteBack?.(node);
+          if (t) t.ok++;
+          done++;
+        } finally {
+          // P1：任意结局都结算一次（失败/游离同样推进进度；成败终态由按钮结果分支反馈）
+          settled++;
+          if (progress) {
+            progress.settled = settled;
+            this.renderProgress(doc);
+          }
+          onSettle?.(settled, total);
         }
-        // 5.2 回写前存活检查（v1.1.8 补齐，此前漏实现）：详情区重渲染后节点游离，
-        // 译文已入缓存，放弃回写（由调用方视情况自动重试）；不计 ok
-        if (!node.isConnected) {
-          detached++;
-          return;
-        }
-        node.nodeValue = original.replace(trimmed, formatted);
-        // v1.1.5 嵌套乱码修复：登记回写（DOMPatcher 不再重送）
-        this.onWriteBack?.(node);
-        if (t) t.ok++;
-        done++;
       })
     );
     // 延迟打标：仅当父元素的全部送译子节点均成功（且未游离、非根容器自身）
@@ -311,7 +386,105 @@ export class MarketplacePatcher {
         parent.setAttribute("data-uut", "mkt");
       }
     }
+    this.endProgress(doc, progress, done);
     return { done, detached, modeSuppressed, outcomes, firstError };
+  }
+
+  /** P1 二级：注册一趟在途翻译（取消该文档待移除计时器，复用已有浮条） */
+  private beginProgress(doc: Document, total: number): { settled: number; total: number } {
+    let set = this.activeProgress.get(doc);
+    if (!set) {
+      set = new Set();
+      this.activeProgress.set(doc, set);
+    } else if (set.size > 0 && [...set].every((r) => r.settled >= r.total)) {
+      // 上一轮已全部完成（浮条待移除）→ 开新会话，聚合口径回到本轮
+      set.clear();
+    }
+    const record = { settled: 0, total };
+    set.add(record);
+    const timer = this.progressTimers.get(doc);
+    if (timer !== undefined) {
+      (doc.defaultView ?? window).clearTimeout(timer);
+      this.progressTimers.delete(doc);
+    }
+    return record;
+  }
+
+  /** P1 二级：按注册表聚合刷新浮条文本与十档宽度（离散类切换，禁内联样式） */
+  private renderProgress(doc: Document): void {
+    const set = this.activeProgress.get(doc);
+    if (!set || set.size === 0) return;
+    let settled = 0;
+    let total = 0;
+    for (const r of set) {
+      settled += r.settled;
+      total += r.total;
+    }
+    const el = this.ensureProgressEl(doc);
+    el.label.textContent = `UUT 翻译中 ${settled}/${total}`;
+    const step = total === 0 ? 0 : Math.min(10, Math.floor((settled / total) * 10));
+    // v1.3 F2：批在途（有未结算节点）时填充条脉动——消除"计数冻结不动"的静止感
+    const pulse = settled < total ? " uut-pulse" : "";
+    el.fill.className = `uut-mkt-progress-fill uut-p-${step}${pulse}`;
+  }
+
+  /** P1 二级：一趟结束——保留在注册表（累计口径：完成的趟仍计入 settled/total）；
+   * 该文档全部趟完成时显示完成并延时移除浮条 */
+  private endProgress(
+    doc: Document,
+    record: { settled: number; total: number } | null,
+    done: number
+  ): void {
+    if (!record) return;
+    const set = this.activeProgress.get(doc);
+    if (!set) return;
+    const allDone = [...set].every((r) => r.settled >= r.total);
+    if (!allDone) {
+      this.renderProgress(doc);
+      return;
+    }
+    this.activeProgress.delete(doc);
+    const el = this.progressEls.get(doc);
+    if (el?.root.isConnected) {
+      el.label.textContent = done > 0 ? "UUT ✓ 已完成" : "UUT 已结束";
+      // v1.3 F1：完成态立即淡出（原停留 1.5s 造成"进度条比译文慢一秒"的观感）
+      el.root.classList.add("uut-mkt-progress-done");
+    }
+    const view = doc.defaultView ?? window;
+    this.progressTimers.set(
+      doc,
+      view.setTimeout(() => {
+        this.progressEls.get(doc)?.root.remove();
+        this.progressEls.delete(doc);
+        this.progressTimers.delete(doc);
+      }, 600)
+    );
+  }
+
+  /** P1 二级：确保该文档存在悬浮进度条元素（R-30 跨 realm：元素由目标 doc 自建） */
+  private ensureProgressEl(doc: Document): {
+    root: HTMLElement;
+    label: HTMLElement;
+    fill: HTMLElement;
+  } {
+    const existing = this.progressEls.get(doc);
+    if (existing?.root.isConnected) return existing;
+    const root = doc.createElement("div");
+    root.className = "uut-mkt-progress";
+    root.setAttribute("data-uut", "progress");
+    root.setAttribute("data-no-translate", "true");
+    const track = doc.createElement("div");
+    track.className = "uut-mkt-progress-track";
+    const fill = doc.createElement("div");
+    fill.className = "uut-mkt-progress-fill uut-p-0";
+    track.appendChild(fill);
+    const label = doc.createElement("span");
+    root.appendChild(track);
+    root.appendChild(label);
+    doc.body.appendChild(root);
+    const el = { root, label, fill };
+    this.progressEls.set(doc, el);
+    return el;
   }
 
   /** 有待译节点但零回写时的主因归类（按钱包安全优先级）；无可译内容返回 null（显示 ✓） */

@@ -39,6 +39,35 @@ describe("createActiveProvider（设计文档 4.4.2 未配置行为）", () => {
     expect(await createActiveProvider(settingsWith({ activeProvider: "custom" }), ks, http)).toBeNull();
   });
 
+  it("v1.3：usageSink 透传至 openai（翻译时收到真实 usage）；其他引擎不透传", async () => {
+    const ks = new KeyStorage(new MemoryIO(), "s.bin");
+    await ks.set("openai", "sk-x");
+    await ks.set("deepl", "k:fx");
+    const sink: unknown[] = [];
+    const usageHttp: HttpClient = async () => ({
+      status: 200,
+      text: JSON.stringify({
+        choices: [{ message: { content: "好" } }],
+        usage: { prompt_tokens: 100, completion_tokens: 20 },
+      }),
+    });
+    const p = await createActiveProvider(
+      settingsWith({ activeProvider: "openai" }),
+      ks,
+      usageHttp,
+      (u) => sink.push(u)
+    );
+    await p!.translate("hi");
+    expect(sink).toEqual([{ promptTokens: 100, completionTokens: 20 }]);
+    const deepl = await createActiveProvider(
+      settingsWith({ activeProvider: "deepl" }),
+      ks,
+      http,
+      (u) => sink.push(u)
+    );
+    expect(deepl?.id).toBe("deepl"); // 不透传：无 onUsage 通道，sink 不被调用
+  });
+
   it("Custom 端点齐备时构建实例", async () => {
     const ks = new KeyStorage(new MemoryIO(), "s.bin");
     const s = settingsWith({

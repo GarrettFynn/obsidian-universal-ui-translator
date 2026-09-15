@@ -85,6 +85,18 @@ describe("TranslationCoordinator 数据流（设计文档 3.2）", () => {
     expect((provider as StubProvider).calls).toHaveLength(0);
   });
 
+  it("B1：来源版本变化（Obsidian/插件升级）后同文本仍命中，零重译（D5 推翻）", async () => {
+    const { coordinator, cache, provider } = setup();
+    const key = CacheManager.makeKey("Open Settings", "stub", "zh-CN", "");
+    // 模拟旧版本来源写入的存量条目（v1.1.x 格式，from 为 core@appVersion）
+    cache.set(key, {
+      src: "Open Settings", tgt: "打开设置", provider: "stub",
+      lang: "zh-CN", from: "core@1.9.0", hits: 3, updatedAt: 1,
+    });
+    expect(await coordinator.translate("Open Settings", CTX)).toBe("打开设置");
+    expect((provider as StubProvider).calls).toHaveLength(0); // 升级不再触发全量重译
+  });
+
   it("cacheEnabled=off 时不读不写缓存，直调 Provider（v1.1.5 死配置接线）", async () => {
     const provider = new StubProvider();
     const cache = new CacheManager(new MemoryIO(), "cache.json");
@@ -145,6 +157,21 @@ describe("TranslationCoordinator 数据流（设计文档 3.2）", () => {
     expect(coordinator.isCircuitOpen()).toBe(true);
     await coordinator.translate("Another Label", CTX);
     expect(stub.calls).toHaveLength(5); // 熔断期内未发起新请求
+  });
+
+  it("A3：429 限流不计入熔断——连续限流不触发 10 分钟全停（负缓存仍生效）", async () => {
+    const stub = new StubProvider();
+    stub.behavior = () => {
+      throw new Error("OpenAI HTTP 429: rate limited");
+    };
+    let circuitNotices = 0;
+    const { coordinator } = setup({ provider: stub, onCircuitOpen: () => circuitNotices++ });
+    for (let i = 0; i < 8; i++) {
+      await coordinator.translate(`Rate Label ${i}`, CTX);
+    }
+    expect(circuitNotices).toBe(0);
+    expect(coordinator.isCircuitOpen()).toBe(false);
+    expect(stub.calls).toHaveLength(8); // 未熔断：每条新文本仍尝试（同文本受 5 分钟负缓存约束）
   });
 
   it("resetFailures：熔断与负缓存立即复位——修好配置后无需重启（v1.1.0 热生效）", async () => {
@@ -298,16 +325,16 @@ describe("translateWithOutcome 结果分类（v1.1.8：手动通道区分「无�
     expect(stub.calls).toHaveLength(0);
   });
 
-  it("failed 携带错误摘要；TTL 内同文本归类 negative-cache；连续失败归类 circuit", async () => {
+  it("failed 携带错误摘要；TTL 内同文本归类 negative-cache；连续失败归类 circuit（v1.2 A3 起 429 不计熔断，改用 500 刺激）", async () => {
     const stub = new StubProvider();
     stub.behavior = () => {
-      throw new Error("OpenAI HTTP 429: slow down");
+      throw new Error("OpenAI HTTP 500: server error");
     };
     const { coordinator } = setup({ provider: stub });
     const r1 = await coordinator.translateWithOutcome("Some Label", CTX);
     expect(r1.outcome).toBe("failed");
     expect(r1.text).toBe("Some Label"); // 回退原文不变
-    expect(r1.error).toContain("HTTP 429");
+    expect(r1.error).toContain("HTTP 500");
     // 负缓存：5 分钟内同文本不重试
     const r2 = await coordinator.translateWithOutcome("Some Label", CTX);
     expect(r2.outcome).toBe("negative-cache");

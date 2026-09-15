@@ -33,8 +33,6 @@ export interface CoordinatorOptions {
   glossary: Record<string, string>;
   /** 当前模型 id（进入缓存键维度，4.2.3） */
   getModelId?: () => string;
-  /** 来源维度解析：pluginId → "pluginId@version" / 核心为 "core@appVersion"（装配层注入） */
-  resolveFrom?: (pluginId: string) => string;
   /** 批量通道（4.2.2 BatchTranslator，装配层注入）；缺省时逐条直调 provider.translate */
   translateVia?: (masked: string, context?: string) => Promise<string>;
   /** 用量统计（4.5，装配层注入 UsageTracker）；缺省时不计量 */
@@ -99,12 +97,12 @@ export class TranslationCoordinator {
     // 3. Provider 未配置：回退原文（4.4.2 未配置行为）
     const provider = this.getProvider();
     if (!provider) return { text, outcome: "no-provider" };
-    // 4. 缓存（键含 providerId + targetLang + model 维度，4.2.3；v1.1.5 cacheEnabled 接线）
+    // 4. 缓存（键含 providerId + targetLang + model 维度，4.2.3；v1.1.5 cacheEnabled 接线；
+    //    v1.2 B1 来源版本维度退役——键已锚定原文，升级后未变文本继续命中）
     const cacheOn = this.options.isCacheEnabled?.() ?? true;
     const model = this.options.getModelId?.() ?? "";
-    const from = this.options.resolveFrom?.(ctx.pluginId) ?? "";
     const key = CacheManager.makeKey(text, provider.id, this.options.targetLang, model);
-    const hit = cacheOn ? this.cache.get(key, from || undefined) : null;
+    const hit = cacheOn ? this.cache.get(key) : null;
     if (hit) return { text: hit.tgt, outcome: "cache" };
     // 4.5 月度预算熔断：超限暂停送译、回退原文（v1.1.8：每会话提示一次——此前纯静默）
     if (
@@ -147,7 +145,6 @@ export class TranslationCoordinator {
           lang: this.options.targetLang,
           // v1.1.9：缓存键已含模型维度，条目冗余一份供「清理失效条目」按模型判定
           model,
-          from,
           hits: 0,
           updatedAt: this.now(),
         });
@@ -164,13 +161,18 @@ export class TranslationCoordinator {
       if (this.consecutiveFailures < 3) {
         console.warn(`[uut] 翻译请求失败：${String(e).slice(0, 160)}`);
       }
-      this.noteFailure(text);
+      this.noteFailure(text, e);
       return { text, outcome: "failed", error: String(e).slice(0, 160) };
     }
   }
 
   isCircuitOpen(): boolean {
     return this.now() < this.circuitOpenUntil;
+  }
+
+  /** v1.2 A3：熔断剩余毫秒（状态栏倒计时显示用） */
+  circuitRemainingMs(): number {
+    return Math.max(0, this.circuitOpenUntil - this.now());
   }
 
   /** 配置变更热生效（v1.1.0）：清熔断、负缓存与鉴权提示状态——修好配置后无需重启/苦等 10 分钟 */
@@ -182,8 +184,11 @@ export class TranslationCoordinator {
     this.budgetNotified = false;
   }
 
-  private noteFailure(text: string): void {
+  private noteFailure(text: string, e?: unknown): void {
     this.negativeCache.set(text, this.now());
+    // v1.2 A3：429 是限流背压不是服务故障——不计入熔断连续失败
+    // （负缓存照记：该文本 5 分钟内不重发，给服务商喘息；成功一次即复位连续计数）
+    if (e !== undefined && /HTTP 429/.test(String(e))) return;
     this.consecutiveFailures++;
     if (this.consecutiveFailures >= CIRCUIT_FAILURE_THRESHOLD && !this.isCircuitOpen()) {
       this.circuitOpenUntil = this.now() + CIRCUIT_OPEN_MS;

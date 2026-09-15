@@ -17,7 +17,7 @@ class EchoProvider extends TranslationProvider {
 }
 
 describe("TranslationProvider.translateBatch 默认实现", () => {
-  it("受控并发逐条翻译，返回顺序与输入一致", async () => {
+  it("并发逐条翻译（在途由装配层信号量封顶，A2），返回顺序与输入一致", async () => {
     const p = new EchoProvider();
     const input = ["a", "b", "c", "d", "e", "f", "g"];
     expect(await p.translateBatch(input)).toEqual(["A", "B", "C", "D", "E", "F", "G"]);

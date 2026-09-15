@@ -19,6 +19,8 @@ Thumbs.db
 # test coverage report
 coverage/
 
-# internal process docs & one-off spikes (archived on private remote only)
-文档/
-spikes/
+# agent tool local memory (e.g. .workbuddy; .codeartsdoer 目录自带忽略)
+.workbuddy/
+
+# 临时文件
+cplist.tmp.json

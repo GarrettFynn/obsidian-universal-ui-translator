@@ -182,3 +182,130 @@
   background: var(--text-accent);
   opacity: 0.45;
 }
+
+/* ===== v1.2 市场翻译进度（P1 两级显示） ===== */
+
+/* 一级：「译」按钮翻译期间显示 settled/total 计数（定宽防数字跳动；官方审核禁内联样式） */
+.uut-mkt-btn.uut-mkt-progressing {
+  min-width: 3.2em;
+  text-align: center;
+}
+
+/* 二级：市场窗口右下角悬浮进度条（市场浏览器为独立窗口，主窗口状态栏不可见） */
+.uut-mkt-progress {
+  position: fixed;
+  right: 16px;
+  /* v1.3.1：上移避开下方常驻用量徽标（主窗口模态场景无徽标，仅位置略高无碍） */
+  bottom: 56px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 180px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+}
+
+/* v1.3.1：市场弹窗常驻用量徽标——独立窗口内唯一的 token 消耗视图（与状态栏同源供数） */
+.uut-mkt-usage {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 1000;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.uut-mkt-progress-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--background-modifier-border);
+  overflow: hidden;
+}
+
+.uut-mkt-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--interactive-accent);
+  transition: width 0.2s ease;
+}
+
+/* 填充宽度十档离散类（禁内联 style 赋值，档位预定义于 CSS） */
+.uut-p-0 {
+  width: 0%;
+}
+
+.uut-p-1 {
+  width: 10%;
+}
+
+.uut-p-2 {
+  width: 20%;
+}
+
+.uut-p-3 {
+  width: 30%;
+}
+
+.uut-p-4 {
+  width: 40%;
+}
+
+.uut-p-5 {
+  width: 50%;
+}
+
+.uut-p-6 {
+  width: 60%;
+}
+
+.uut-p-7 {
+  width: 70%;
+}
+
+.uut-p-8 {
+  width: 80%;
+}
+
+.uut-p-9 {
+  width: 90%;
+}
+
+.uut-p-10 {
+  width: 100%;
+}
+
+/* v1.3 F1：完成态淡出（原 1.5s 停留造成"进度条比译文慢一秒"的观感） */
+.uut-mkt-progress-done {
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+
+/* v1.3 F2：批在途脉动——opacity 动画走合成层，不触发布局 */
+@keyframes uut-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.uut-pulse {
+  animation: uut-pulse 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .uut-pulse {
+    animation: none;
+  }
+}

@@ -23,6 +23,16 @@ export interface ProviderConfig {
   responsePath?: string;
   /** OpenAI 兼容接口：请求体注入 thinking:{type:"disabled"}（DeepSeek V4 等默认开启思考的模型，R-34） */
   disableThinking?: boolean;
+  /** v1.3：token 单价（每百万）——挂在自定义接入接口（openai）配置上，两者齐备且 >0 才启用费用展示 */
+  pricePerMillion?: { input: number; output: number };
+  /** 货币符号（原样展示，缺省 ¥） */
+  priceCurrency?: string;
+}
+
+/** v1.3：单次请求 API 上报的 token 用量（OpenAI 兼容响应 usage 字段，账单口径） */
+export interface TokenUsage {
+  promptTokens: number;
+  completionTokens: number;
 }
 
 export interface PluginSettings {
@@ -62,6 +72,8 @@ export interface PluginSettings {
   /** v1.1.5 一次性迁移标记：communityPlugins 在 <1.1.5 从未生效（死配置），旧值 true 不代表
    *  用户真实意图，升级时统一置 false 并写此标记（仅迁移一次，之后尊重用户手动选择） */
   communityScopeMigratedV115?: boolean;
+  /** v1.3：状态栏用量速率段（token/字符口径 + 今日费用估算），默认开 */
+  usageInStatusBar: boolean;
   debugMode: boolean;
 }
 
@@ -89,6 +101,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
     pluginBlacklist: ["universal-ui-translator"],
   },
   interceptors: { command: true, menu: true, setting: true, dom: true, marketplace: true },
+  usageInStatusBar: true,
   debugMode: false,
 };
 
@@ -100,8 +113,10 @@ export interface CacheEntry {
   lang: string;
   /** v1.1.9：模型 id 冗余（缓存键已含模型维度；供「清理失效条目」按模型判定；旧条目无此字段） */
   model?: string;
-  /** 来源维度：pluginId@version，核心文本为 core@appVersion */
-  from: string;
+  /** v1.2 起为遗留字段（B1 来源版本维度退役）：旧条目保留原值仅供兼容读取，新写入不再赋值 */
+  from?: string;
+  /** v1.2（B2）：最近一次命中时间；缺省回落 updatedAt——90 天淘汰与 flush 排序统一按此口径 */
+  lastAccessAt?: number;
   hits: number;
   updatedAt: number;
 }

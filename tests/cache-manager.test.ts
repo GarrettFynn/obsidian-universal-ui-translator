@@ -128,12 +128,42 @@ describe("CacheManager", () => {
     expect(cm.stats().lastFlushAt).toBe(1234567890);
   });
 
-  it("版本维度惰性失效：插件升级后旧条目不再命中（设计文档 D5 / 测试用例 7）", () => {
+  it("B1：来源版本维度退役——旧条目（含 from）在任何来源下均按文本键命中（D5 推翻）", () => {
     const cm = new CacheManager(new MemoryIO(), PATH);
     const key = CacheManager.makeKey("Open", "openai", "zh-CN", "m");
     cm.set(key, entry("Open", "calendar@1.5.9"));
-    expect(cm.get(key, "calendar@1.6.0")).toBeNull();
-    expect(cm.get(key, "calendar@1.5.9")).toBeNull(); // 已移除，不再命中
+    // 原 D5 行为：版本不符即删除重译——现文本未变即命中（升级零重译）
+    expect(cm.get(key)?.tgt).toBe("译：Open");
+    expect(cm.get(key)?.tgt).toBe("译：Open"); // 也不再被移除
+  });
+
+  it("B2：命中刷新 lastAccessAt 且不增待落盘计数；accessedSinceFlush 由 flush 复位", async () => {
+    const io = new MemoryIO();
+    let t = 1000;
+    const cm = new CacheManager(io, PATH, 5000, 20000, () => t);
+    cm.set("k", entry("A", "p@1", 1000));
+    expect(cm.pendingWrites).toBe(1);
+    expect(cm.accessedSinceFlush).toBe(false);
+    t = 1000 + 60_000;
+    expect(cm.get("k")?.lastAccessAt).toBe(61_000);
+    expect(cm.pendingWrites).toBe(1); // 命中不增脏（无写放大）
+    expect(cm.accessedSinceFlush).toBe(true);
+    await cm.flush();
+    expect(cm.accessedSinceFlush).toBe(false);
+  });
+
+  it("B2：90 天淘汰按最近访问——写于 91 天前但近期命中的条目存活", async () => {
+    const io = new MemoryIO();
+    const t0 = 1757000000000;
+    const cm = new CacheManager(io, PATH, 5000, 20000, () => t0);
+    const ancient = t0 - 91 * 24 * 60 * 60 * 1000;
+    cm.set("survive", { ...entry("S", "p@1", ancient), lastAccessAt: t0 - 24 * 3600 * 1000 });
+    cm.set("stale", entry("St", "p@1", ancient));
+    await cm.flush();
+    const cm2 = new CacheManager(io, PATH, 5000, 20000, () => t0);
+    await cm2.load();
+    expect(cm2.get("survive")?.src).toBe("S");
+    expect(cm2.get("stale")).toBeNull();
   });
 
   it("flush/load 往返；90 天未命中条目在 load 时清理", async () => {
@@ -149,7 +179,7 @@ describe("CacheManager", () => {
     expect(cm2.get("stale")).toBeNull();
   });
 
-  it("磁盘上限按 updatedAt 最旧淘汰", async () => {
+  it("磁盘上限按最近访问时间最旧淘汰（B2：lastAccessAt 缺省回落 updatedAt）", async () => {
     const io = new MemoryIO();
     const cm = new CacheManager(io, PATH, 5000, 2);
     cm.set("k1", entry("a", "p@1", 1000));
@@ -216,6 +246,35 @@ describe("CacheManager", () => {
     const cm = new CacheManager(io, PATH);
     await cm.load();
     expect(cm.get("anything")).toBeNull();
+  });
+
+  it("B4：主文件损坏时回落 .bak 兜底副本", async () => {
+    const io = new MemoryIO();
+    const t0 = Date.now();
+    // 先落盘一份好数据，再手工制造主文件损坏（.bak 保留完好）
+    const cm = new CacheManager(io, PATH, 5000, 20000, () => t0);
+    cm.set("k", entry("Good", "p@1", t0));
+    await cm.flush();
+    await io.write(`${PATH}.bak`, io.files.get(PATH)!);
+    io.files.set(PATH, "{corrupted");
+    const cm2 = new CacheManager(io, PATH, 5000, 20000, () => t0);
+    await cm2.load();
+    expect(cm2.get("k")?.src).toBe("Good");
+  });
+
+  it("B4：.bak 节流刷新——5 分钟内第二次 flush 不重复复制", async () => {
+    const io = new MemoryIO();
+    let t = 1000;
+    const cm = new CacheManager(io, PATH, 5000, 20000, () => t);
+    cm.set("k", entry("A", "p@1", 1000));
+    await cm.flush(); // 首 flush 写主文件（尚无旧主文件可复制，.bak 不产生）
+    t += 60_000;
+    cm.set("k2", entry("B", "p@1", t));
+    await cm.flush(); // 距上次 .bak 标记 1 分钟 < 5 分钟：跳过复制
+    expect(io.files.has(`${PATH}.bak`)).toBe(false);
+    t += 5 * 60 * 1000;
+    await cm.flush(); // 超过节流间隔：复制当前主文件为 .bak
+    expect(io.files.has(`${PATH}.bak`)).toBe(true);
   });
 
   it("importEntries：合法条目导入、非法条目跳过并计数（4.5 导入校验）", () => {

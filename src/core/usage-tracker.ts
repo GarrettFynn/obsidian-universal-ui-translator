@@ -1,10 +1,13 @@
 import { TextFileIO } from "../types";
 
-/** 单日用量桶（v1.1.9 用量统计分页）：calls=送译条数，in/outChars=输入/输出字符 */
+/** 单日用量桶（v1.1.9 用量统计分页）：calls=送译条数，in/outChars=输入/输出字符；
+ *  v1.3：in/outTokens 为 API 上报的真实账单口径 token（旧文件/无 usage 网关缺省视为 0） */
 export interface DayUsage {
   calls: number;
   inChars: number;
   outChars: number;
+  inTokens?: number;
+  outTokens?: number;
 }
 
 interface UsageFile {
@@ -16,6 +19,20 @@ interface UsageFile {
 
 /** 逐日明细保留天数（图表只展示近 30 天，多留一月余量；超出剪枝控制文件体积） */
 const DAY_RETENTION = 62;
+
+/** v1.2 B4：record 落盘去抖间隔（内存累加，≥5s 且有变化才写盘；崩溃最多丢 5s 统计） */
+const WRITE_DEBOUNCE_MS = 5000;
+
+/** v1.3：速率环形窗口参数——保留 10 分钟（最长 5 分钟窗口 + 余量），容量硬顶防御 */
+const RECENT_WINDOW_MS = 10 * 60 * 1000;
+const RECENT_MAX_ENTRIES = 2000;
+
+/** v1.3：速率窗口条目（仅内存不落盘） */
+interface RecentEntry {
+  at: number;
+  tokens: number;
+  chars: number;
+}
 
 /**
  * 用量统计与月度预算（设计文档 4.5 API Tab / 9.3 成本控制）
@@ -30,6 +47,13 @@ export class UsageTracker {
   private chars = 0;
   private days = new Map<string, DayUsage>();
   private loaded = false;
+  private writeTimer: number | null = null;
+  /** v1.3：速率环形窗口（仅内存）与会话级计数 */
+  private recent: RecentEntry[] = [];
+  private sessionTokens = 0;
+  private sessionChars = 0;
+  private sessionCalls = 0;
+  private peakTokensPerMin = 0;
 
   constructor(
     private io: TextFileIO,
@@ -61,7 +85,14 @@ export class UsageTracker {
       // 逐日明细不受跨月清零影响（图表跨月画近 30 天）
       for (const [k, v] of Object.entries(raw.days ?? {})) {
         if (typeof v?.calls === "number") {
-          this.days.set(k, { calls: v.calls | 0, inChars: v.inChars | 0, outChars: v.outChars | 0 });
+          this.days.set(k, {
+            calls: v.calls | 0,
+            inChars: v.inChars | 0,
+            outChars: v.outChars | 0,
+            // v1.3：token 实测字段透传（旧文件缺省视为 0）
+            ...(typeof v.inTokens === "number" ? { inTokens: v.inTokens } : {}),
+            ...(typeof v.outTokens === "number" ? { outTokens: v.outTokens } : {}),
+          });
         }
       }
       this.pruneDays();
@@ -70,7 +101,11 @@ export class UsageTracker {
     }
   }
 
-  /** 记录本次送译字符数并落盘；outChars 为译文长度（v1.1.9 逐日明细） */
+  /**
+   * 记录本次送译字符数（outChars 为译文长度，v1.1.9 逐日明细）
+   * v1.2 B4：内存累加 + 去抖落盘（原每条翻译全量重写一次 usage.json，500 条 = 500 次写盘）；
+   * 预算判定读内存不受影响；崩溃最多丢一个去抖间隔的统计
+   */
   async record(chars: number, outChars = 0): Promise<void> {
     await this.load();
     if (this.month !== this.currentMonth()) {
@@ -85,6 +120,104 @@ export class UsageTracker {
     day.outChars += outChars;
     this.days.set(key, day);
     this.pruneDays();
+    this.pushRecent({ at: this.now().getTime(), tokens: 0, chars });
+    this.sessionChars += chars;
+    this.sessionCalls++;
+    this.scheduleWrite();
+  }
+
+  /**
+   * v1.3：记录一次请求 API 上报的真实 token（账单口径；合批一次调用即整批消耗）
+   * 与 record 同一去抖落盘路径，日桶按 in/out 分档（费用估算按档计价）
+   */
+  async recordTokens(promptTokens: number, completionTokens: number): Promise<void> {
+    await this.load();
+    const key = this.dayKey(this.now());
+    const day = this.days.get(key) ?? { calls: 0, inChars: 0, outChars: 0 };
+    day.inTokens = (day.inTokens ?? 0) + promptTokens;
+    day.outTokens = (day.outTokens ?? 0) + completionTokens;
+    this.days.set(key, day);
+    this.pushRecent({
+      at: this.now().getTime(),
+      tokens: promptTokens + completionTokens,
+      chars: 0,
+    });
+    this.sessionTokens += promptTokens + completionTokens;
+    this.scheduleWrite();
+  }
+
+  /** v1.3：窗口内每分钟消耗速率；windowMs ≤ 60s 时顺带刷新峰值（供会话卡片展示） */
+  ratePerMinute(windowMs: number): { tokensPerMin: number; charsPerMin: number } {
+    const cutoff = this.now().getTime() - windowMs;
+    let tokens = 0;
+    let chars = 0;
+    for (const e of this.recent) {
+      if (e.at < cutoff) continue;
+      tokens += e.tokens;
+      chars += e.chars;
+    }
+    const scale = windowMs / 60_000;
+    const rate = { tokensPerMin: tokens / scale, charsPerMin: chars / scale };
+    if (windowMs <= 60_000) {
+      this.peakTokensPerMin = Math.max(this.peakTokensPerMin, rate.tokensPerMin);
+    }
+    return rate;
+  }
+
+  /** v1.3：今日用量（in/out token 拆分——费用按档计价）；异步确保日桶已加载 */
+  async todayUsage(): Promise<{ inTokens: number; outTokens: number; chars: number }> {
+    await this.load();
+    const day = this.days.get(this.dayKey(this.now()));
+    return {
+      inTokens: day?.inTokens ?? 0,
+      outTokens: day?.outTokens ?? 0,
+      chars: day ? day.inChars : 0,
+    };
+  }
+
+  /** v1.3：会话级统计（自插件加载起） */
+  sessionStats(): { tokens: number; chars: number; calls: number; peakTokensPerMin: number } {
+    return {
+      tokens: this.sessionTokens,
+      chars: this.sessionChars,
+      calls: this.sessionCalls,
+      peakTokensPerMin: this.peakTokensPerMin,
+    };
+  }
+
+  /** v1.3：最近一次活动时间戳（ms；无活动为 null）——状态栏空闲隐藏判定用 */
+  lastActivityAt(): number | null {
+    return this.recent.length > 0 ? this.recent[this.recent.length - 1].at : null;
+  }
+
+  /** 速率窗口追加 + 懒剪枝（>10 分钟）+ 容量硬顶（防御性） */
+  private pushRecent(e: RecentEntry): void {
+    this.recent.push(e);
+    const cutoff = e.at - RECENT_WINDOW_MS;
+    while (this.recent.length > 0 && this.recent[0].at < cutoff) this.recent.shift();
+    if (this.recent.length > RECENT_MAX_ENTRIES) {
+      this.recent.splice(0, this.recent.length - RECENT_MAX_ENTRIES);
+    }
+  }
+
+  private scheduleWrite(): void {
+    if (this.writeTimer !== null) return;
+    this.writeTimer = window.setTimeout(() => {
+      this.writeTimer = null;
+      void this.persist();
+    }, WRITE_DEBOUNCE_MS);
+  }
+
+  /** v1.2 B4：立即落盘（去抖兜底；onunload 调用） */
+  async flush(): Promise<void> {
+    if (this.writeTimer !== null) {
+      window.clearTimeout(this.writeTimer);
+      this.writeTimer = null;
+    }
+    await this.persist();
+  }
+
+  private async persist(): Promise<void> {
     try {
       await this.io.write(
         this.filePath,
@@ -105,12 +238,14 @@ export class UsageTracker {
   async monthStats(): Promise<DayUsage> {
     await this.load();
     const prefix = this.currentMonth();
-    const sum: DayUsage = { calls: 0, inChars: 0, outChars: 0 };
+    const sum: DayUsage = { calls: 0, inChars: 0, outChars: 0, inTokens: 0, outTokens: 0 };
     for (const [k, v] of this.days) {
       if (!k.startsWith(prefix)) continue;
       sum.calls += v.calls;
       sum.inChars += v.inChars;
       sum.outChars += v.outChars;
+      sum.inTokens = (sum.inTokens ?? 0) + (v.inTokens ?? 0);
+      sum.outTokens = (sum.outTokens ?? 0) + (v.outTokens ?? 0);
     }
     return sum;
   }
@@ -129,6 +264,8 @@ export class UsageTracker {
         calls: v?.calls ?? 0,
         inChars: v?.inChars ?? 0,
         outChars: v?.outChars ?? 0,
+        inTokens: v?.inTokens ?? 0,
+        outTokens: v?.outTokens ?? 0,
       });
     }
     return out;

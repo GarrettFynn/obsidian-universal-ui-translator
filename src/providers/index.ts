@@ -1,5 +1,5 @@
 import { KeyStorage } from "../core/key-storage";
-import { PluginSettings } from "../types";
+import { PluginSettings, TokenUsage } from "../types";
 import { AzureProvider } from "./azure-provider";
 import { HttpClient, TranslationProvider } from "./base-provider";
 import { CustomProvider } from "./custom-provider";
@@ -10,11 +10,13 @@ import { OpenAIProvider } from "./openai-provider";
 /**
  * 按当前配置构建活动 Provider（设计文档 4.3.2）。
  * 缺 API Key（openai）或缺端点（custom）时返回 null——4.4.2：未配置可用 Provider 时拦截器不激活。
+ * v1.3：usageSink 仅 openai 透传（响应 usage 字段为账单口径；其他引擎按字符计费不需要）。
  */
 export async function createActiveProvider(
   settings: PluginSettings,
   keyStorage: KeyStorage,
-  http: HttpClient
+  http: HttpClient,
+  usageSink?: (u: TokenUsage) => void
 ): Promise<TranslationProvider | null> {
   const id = settings.activeProvider;
   const cfg = settings.providers[id] ?? {};
@@ -27,6 +29,7 @@ export async function createActiveProvider(
       baseUrl: cfg.apiBaseUrl || undefined,
       model: cfg.model || undefined,
       disableThinking: cfg.disableThinking,
+      onUsage: usageSink,
     });
   }
   if (id === "custom") {

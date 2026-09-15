@@ -1,5 +1,6 @@
 import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import type UniversalUiTranslatorPlugin from "../../main";
+import { estimateTokenCost, fmtCompact, fmtCost } from "../core/format";
 
 type TabId = "general" | "api" | "usage" | "scope" | "cache" | "advanced";
 
@@ -49,6 +50,8 @@ function estimateCost(chars: number): string {
  */
 export class UutSettingTab extends PluginSettingTab {
   private activeTab: TabId = "general";
+  /** v1.3：用量页图表口径（token 实测 ⇄ 字符折算估算；实例字段不持久化，关页即回默认） */
+  private usageChartBasis: "token" | "chars" = "token";
 
   constructor(app: App, private plugin: UniversalUiTranslatorPlugin) {
     super(app, plugin);
@@ -191,6 +194,52 @@ export class UutSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           })
         );
+      // v1.3.1：token 单价改为组合输入框（修复 1.3.0 双框互斥导致价格从未保存的 bug）
+      const priceCfg = cfg.pricePerMillion;
+      const priceText =
+        priceCfg && priceCfg.input > 0 && priceCfg.output > 0
+          ? `${priceCfg.input}/${priceCfg.output}`
+          : "";
+      let priceEnabled = priceText !== "";
+      new Setting(el)
+        .setName("token 单价（每百万）")
+        .setDesc(
+          "格式 输入价/输出价，如 2/8（按你所用模型后台标价填）。填好后状态栏与用量页按 实测 token × 单价 展示费用估算；" +
+            "留空关闭。仅影响展示，不影响预算熔断"
+        )
+        .addText((text) => {
+          text.setPlaceholder("2/8").setValue(priceText).onChange(async (v) => {
+            const s = this.plugin.settings;
+            const c = s.providers.openai ?? {};
+            const m = /^\s*(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)\s*$/.exec(v);
+            if (m) {
+              const input = Math.min(10_000, Number(m[1]));
+              const output = Math.min(10_000, Number(m[2]));
+              c.pricePerMillion = { input, output };
+              s.providers.openai = c;
+              await this.plugin.saveSettings();
+              if (!priceEnabled) {
+                priceEnabled = true;
+                new Notice("UUT：费用估算已启用（状态栏与用量页可见）");
+              }
+            } else if (v.trim() === "") {
+              delete c.pricePerMillion;
+              s.providers.openai = c;
+              priceEnabled = false;
+              await this.plugin.saveSettings();
+            }
+            // 输入过程中（如 "2/"）静默等待完整格式，不保存不提示
+          });
+        })
+        .addText((text) => {
+          text.setPlaceholder("¥").setValue(cfg.priceCurrency ?? "").onChange(async (v) => {
+            const s = this.plugin.settings;
+            const c = s.providers.openai ?? {};
+            c.priceCurrency = v.trim() || undefined;
+            s.providers.openai = c;
+            await this.plugin.saveSettings();
+          });
+        });
     } else if (s.activeProvider === "azure") {
       this.addTextSetting(el, "Region", "如 eastasia", cfg.region ?? "", "eastasia",
         async (v) => { cfg.region = v; });
@@ -465,18 +514,35 @@ export class UutSettingTab extends PluginSettingTab {
   }
 
   /**
-   * 用量统计（v1.1.9）：本月汇总卡片 + 近 30 天逐日柱状图（纯 DOM/CSS 零依赖）。
-   * tokens 为字符折算估算（输入 ≈ 字符/4、输出 ≈ 字符/2.5，与费用基准同口径），非账单口径
+   * 用量统计（v1.1.9 起）：本月汇总卡片 + 近 30 天逐日柱状图（纯 DOM/CSS 零依赖）。
+   * v1.3 双口径：token 实测（API usage 字段，账单口径，openai 通道）+ 字符折算估算（历史/其他引擎）。
+   * 新增：会话速率卡片、今日实测卡片、图表口径切换、用户单价成本卡片
    */
   private async renderUsage(el: HTMLElement): Promise<void> {
     const month = await this.plugin.getUsageMonthStats();
     const monthChars = await this.plugin.monthlyUsage();
     const daily = await this.plugin.getUsageDaily(30);
+    const session = this.plugin.usageSessionStats();
+    const rate1 = this.plugin.usageRate(60_000);
+    const rate5 = this.plugin.usageRate(5 * 60_000);
+    const today = await this.plugin.usageToday();
+    const isTokenBasis = this.plugin.settings.activeProvider === "openai";
+    const price = this.plugin.settings.providers.openai?.pricePerMillion;
+    const priceOn = !!price && price.input > 0 && price.output > 0;
+    const currency = this.plugin.settings.providers.openai?.priceCurrency ?? "¥";
     const inTok = Math.ceil(month.inChars / 4);
     const outTok = Math.ceil(month.outChars / 2.5);
     const cost = this.estimateCostSplit(month.inChars, month.outChars);
     const toTok = (d: { inChars: number; outChars: number }) =>
       Math.ceil(d.inChars / 4) + Math.ceil(d.outChars / 2.5);
+
+    // v1.3 口径标注：让"实测"与"折算估算"的边界一目了然
+    new Setting(el).setName("计费口径").setDesc(
+      isTokenBasis
+        ? "当前引擎（OpenAI 兼容接口）按 token 计费：v1.3 起直接采集 API 返回的 usage 字段（账单口径，含每请求 system prompt 开销）；" +
+            "状态栏常驻「速率 · 今日 · 费用」段（高级页可关）。切换其他引擎后本页回落字符口径"
+        : "当前引擎按字符计费（DeepL/Google/Azure）：tokens 项为字符折算估算（输入 ≈ 字符/4、输出 ≈ 字符/2.5），仅量级参考"
+    );
 
     new Setting(el)
       .setName("本月用量")
@@ -493,25 +559,65 @@ export class UutSettingTab extends PluginSettingTab {
       c.createDiv("uut-usage-card-label").setText(label);
       c.createDiv("uut-usage-card-value").setText(value);
     };
+    // v1.3 会话卡片（自插件加载起的实时数据，含速率与峰值）
+    addCard("本会话 tokens（实测）", session.tokens.toLocaleString());
+    addCard("本会话送译", `${session.calls.toLocaleString()} 条 / ${fmtCompact(session.chars)} 字`);
+    addCard("近 1 分钟", isTokenBasis ? `${fmtCompact(rate1.tokensPerMin)} tok/min` : `${fmtCompact(rate1.charsPerMin)} 字/min`);
+    addCard("近 5 分钟", isTokenBasis ? `${fmtCompact(rate5.tokensPerMin)} tok/min` : `${fmtCompact(rate5.charsPerMin)} 字/min`);
+    addCard("会话峰值", `${fmtCompact(session.peakTokensPerMin)} tok/min`);
+    // v1.3 今日实测卡片 + 用户单价成本
+    if (isTokenBasis) {
+      addCard("今日 tokens（实测）", (today.inTokens + today.outTokens).toLocaleString());
+      if (priceOn && price) {
+        const todayCost = estimateTokenCost(today.inTokens, today.outTokens, {
+          inputPerMillion: price.input,
+          outputPerMillion: price.output,
+        });
+        const monthCost = estimateTokenCost(month.inTokens ?? 0, month.outTokens ?? 0, {
+          inputPerMillion: price.input,
+          outputPerMillion: price.output,
+        });
+        addCard(`今日费用（≈${currency}）`, fmtCost(todayCost, currency));
+        addCard(`本月费用（≈${currency}）`, fmtCost(monthCost, currency));
+      }
+    }
+    // v1.1.9 既有估算卡片保留（非 openai 引擎与历史数据的唯一口径）
     addCard("本月送译条数", month.calls.toLocaleString());
     addCard("输入 tokens（估算）", inTok.toLocaleString());
     addCard("输出 tokens（估算）", outTok.toLocaleString());
     addCard("估算费用", cost);
 
-    // 近 30 天柱状图：每根条堆叠 输出（上）+ 输入（下），高度按窗口内最大值归一；悬停看精确值
-    const maxTok = Math.max(1, ...daily.map(toTok));
-    new Setting(el).setName("近 30 天逐日用量（tokens 估算）").setHeading();
+    // 近 30 天柱状图（v1.3 口径切换：token 实测 ⇄ 字符折算）：输出（上）+ 输入（下）堆叠，窗口内最大值归一
+    const tokenBasis = this.usageChartBasis === "token";
+    const barIn = (d: (typeof daily)[number]) => (tokenBasis ? d.inTokens ?? 0 : Math.ceil(d.inChars / 4));
+    const barOut = (d: (typeof daily)[number]) => (tokenBasis ? d.outTokens ?? 0 : Math.ceil(d.outChars / 2.5));
+    const maxTok = Math.max(1, ...daily.map((d) => barIn(d) + barOut(d)));
+    new Setting(el)
+      .setName(`近 30 天逐日用量（${tokenBasis ? "tokens 实测" : "tokens 折算估算"}）`)
+      .setHeading();
+    const toggle = el.createDiv("uut-tabbar");
+    for (const [id, label] of [
+      ["token", "tokens 实测"],
+      ["chars", "字符折算"],
+    ] as const) {
+      const btn = toggle.createDiv(`uut-tab${this.usageChartBasis === id ? " uut-tab-active" : ""}`);
+      btn.textContent = label;
+      btn.addEventListener("click", async () => {
+        this.usageChartBasis = id;
+        await this.renderTabs();
+      });
+    }
     const chart = el.createDiv("uut-chart");
     for (const d of daily) {
-      const iT = Math.ceil(d.inChars / 4);
-      const oT = Math.ceil(d.outChars / 2.5);
+      const iV = barIn(d);
+      const oV = barOut(d);
       const bar = chart.createDiv("uut-chart-bar");
       bar.title =
         `${d.date}：调用 ${d.calls} 条\n` +
-        `输入 ${d.inChars.toLocaleString()} 字符 ≈ ${iT.toLocaleString()} tokens\n` +
-        `输出 ${d.outChars.toLocaleString()} 字符 ≈ ${oT.toLocaleString()} tokens`;
-      if (oT > 0) bar.createDiv("uut-chart-out").style.height = `${(oT / maxTok) * 100}%`;
-      if (iT > 0) bar.createDiv("uut-chart-in").style.height = `${(iT / maxTok) * 100}%`;
+        `输入 ${d.inChars.toLocaleString()} 字符 / 实测 ${ (d.inTokens ?? 0).toLocaleString()} tokens\n` +
+        `输出 ${d.outChars.toLocaleString()} 字符 / 实测 ${(d.outTokens ?? 0).toLocaleString()} tokens`;
+      if (oV > 0) bar.createDiv("uut-chart-out").style.height = `${(oV / maxTok) * 100}%`;
+      if (iV > 0) bar.createDiv("uut-chart-in").style.height = `${(iV / maxTok) * 100}%`;
     }
     const axis = el.createDiv("uut-chart-axis");
     axis.createSpan().setText(daily[0]?.date ?? "");
@@ -520,34 +626,37 @@ export class UutSettingTab extends PluginSettingTab {
     const legend = el.createDiv("uut-chart-legend");
     const lg1 = legend.createSpan();
     lg1.createSpan({ cls: "uut-chart-swatch uut-swatch-in" });
-    lg1.appendText("输入 tokens（估算）");
+    lg1.appendText(`输入 tokens（${tokenBasis ? "实测" : "估算"}）`);
     const lg2 = legend.createSpan();
     lg2.createSpan({ cls: "uut-chart-swatch uut-swatch-out" });
-    lg2.appendText("输出 tokens（估算）");
+    lg2.appendText(`输出 tokens（${tokenBasis ? "实测" : "估算"}）`);
 
-    const today = daily[daily.length - 1];
     const week = daily.slice(-7).reduce(
       (acc, d) => ({
         calls: acc.calls + d.calls,
         inChars: acc.inChars + d.inChars,
         outChars: acc.outChars + d.outChars,
+        inTokens: (acc.inTokens ?? 0) + (d.inTokens ?? 0),
+        outTokens: (acc.outTokens ?? 0) + (d.outTokens ?? 0),
       }),
-      { calls: 0, inChars: 0, outChars: 0 }
+      { calls: 0, inChars: 0, outChars: 0, inTokens: 0, outTokens: 0 }
     );
     new Setting(el)
       .setName("今日 / 近 7 日")
       .setDesc(
-        `今日：${today?.calls ?? 0} 条，估算 ${toTok(
-          today ?? { inChars: 0, outChars: 0 }
-        ).toLocaleString()} tokens｜近 7 日：${week.calls.toLocaleString()} 条，估算 ${(
-          Math.ceil(week.inChars / 4) + Math.ceil(week.outChars / 2.5)
-        ).toLocaleString()} tokens`
+        `今日：${daily[daily.length - 1]?.calls ?? 0} 条，实测 ${(
+          today.inTokens + today.outTokens
+        ).toLocaleString()} tokens｜近 7 日：${week.calls.toLocaleString()} 条，实测 ${(
+          (week.inTokens ?? 0) + (week.outTokens ?? 0)
+        ).toLocaleString()} tokens（折算估算 ${(Math.ceil(week.inChars / 4) + Math.ceil(week.outChars / 2.5)).toLocaleString()}）`
       );
     new Setting(el)
       .setName("口径说明")
       .setDesc(
-        COST_BASIS +
-          "；tokens 由字符数折算（输入 ≈ 字符/4、输出 ≈ 字符/2.5），仅量级参考，不代表账单口径。缓存命中与术语表命中不消耗 API、不计入此统计"
+        "v1.3 起 OpenAI 兼容通道记录 API 返回的真实 usage（账单口径，含每请求 system prompt 开销）；" +
+          "「折算估算」由字符数估算（输入 ≈ 字符/4、输出 ≈ 字符/2.5），服务于历史数据与非 token 计费引擎。" +
+          COST_BASIS +
+          "。缓存命中与术语表命中不消耗 API、不计入此统计；月度预算口径仍为字符"
       );
   }
 

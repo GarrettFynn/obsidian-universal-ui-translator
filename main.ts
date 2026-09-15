@@ -1,9 +1,10 @@
 import { Notice, Plugin, requestUrl } from "obsidian";
 import { BatchTranslator } from "./src/core/batch-translator";
 import { CacheManager } from "./src/core/cache-manager";
-import { resolveObsidianVersion } from "./src/core/app-version";
 import { TranslationCoordinator, CoordinatorOptions } from "./src/core/coordinator";
 import { KeyStorage } from "./src/core/key-storage";
+import { Semaphore } from "./src/core/semaphore";
+import { estimateTokenCost, fmtCompact, fmtCost } from "./src/core/format";
 import { FilterEngine } from "./src/filters/filter-engine";
 import { CommandPatcher } from "./src/interceptors/command-patcher";
 import { formatWriteBack } from "./src/interceptors/display-mode";
@@ -41,8 +42,13 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
   private batcher!: BatchTranslator;
   private usageTracker!: UsageTracker;
   private statusBarItem: HTMLElement | null = null;
+  /** v1.3：用量速率状态栏段（与翻译进度段独立并存） */
+  private usageBarItem: HTMLElement | null = null;
+  private lastUsageBarText = "";
   private io!: TextFileIO;
   private http!: HttpClient;
+  /** A2：全局请求信号量——maxConcurrentRequests = 真实在途 HTTP 请求数（所有引擎统一） */
+  private requestSemaphore!: Semaphore;
 
   async onload(): Promise<void> {
     this.settings = Object.assign(
@@ -74,20 +80,27 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
       exists: (p) => this.app.vault.adapter.exists(p),
     };
     // 4.3.1 HTTP 约定：统一 requestUrl（无 CORS 限制）；throw:false 保留状态码供错误分类
+    // A2：先获取信号量再起超时（排队时间不吃超时预算）；真实在途 = maxConcurrentRequests
+    this.requestSemaphore = new Semaphore(() => this.settings.maxConcurrentRequests);
     this.http = async (req) => {
-      // 4.2.2 单请求超时（R-23：默认 30s，高级 Tab 可配置 5–120s）；超时按失败处理，走负缓存/熔断
-      const res = await withTimeout(
-        requestUrl({
-          url: req.url,
-          method: req.method,
-          headers: req.headers,
-          body: req.body,
-          throw: false,
-        }),
-        this.settings.requestTimeoutMs,
-        "翻译请求"
-      );
-      return { status: res.status, text: res.text };
+      await this.requestSemaphore.acquire();
+      try {
+        // 4.2.2 单请求超时（R-23：默认 30s，高级 Tab 可配置 5–120s）；超时按失败处理，走负缓存/熔断
+        const res = await withTimeout(
+          requestUrl({
+            url: req.url,
+            method: req.method,
+            headers: req.headers,
+            body: req.body,
+            throw: false,
+          }),
+          this.settings.requestTimeoutMs,
+          "翻译请求"
+        );
+        return { status: res.status, text: res.text };
+      } finally {
+        this.requestSemaphore.release();
+      }
     };
     // 4.4.1：safeStorage 注入；极少数无钥匙串环境走已预留的降级分支（动态 import：官方 lint 禁用 require 风格）
     let safeStorage;
@@ -108,20 +121,30 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     );
     await this.cache.load();
     // v1.1.0 落盘兜底（4.2.3 既定策略的装配层实现）：每 30s 检查——累计 ≥100 条立即落盘；
-    // 否则有脏数据时每 5 分钟保底落盘。崩溃/强杀最多丢失 5 分钟译文，不再整段会话丢失
+    // 否则有脏数据（含命中刷新的访问时间，B2 accessedSinceFlush）时 30s 保底落盘（v1.2 B4：
+    // 原 5 分钟——崩溃丢失窗口过大；写入频率仍受 30s 轮询节流，.bak 复制另有 5 分钟节流）
     let lastFlushMark = Date.now();
     this.registerInterval(
       window.setInterval(() => {
         const now = Date.now();
         const pending = this.cache.pendingWrites;
-        if (pending >= 100 || (pending > 0 && now - lastFlushMark >= 5 * 60 * 1000)) {
+        if (
+          pending >= 100 ||
+          ((pending > 0 || this.cache.accessedSinceFlush) && now - lastFlushMark >= 30_000)
+        ) {
           lastFlushMark = now;
           void this.cache.flush();
         }
       }, 30_000)
     );
     this.filter = new FilterEngine(this.settings.skipPatterns, this.settings.targetLang);
-    this.provider = await createActiveProvider(this.settings, this.keyStorage, this.http);
+    this.provider = await createActiveProvider(
+      this.settings,
+      this.keyStorage,
+      this.http,
+      // v1.3：响应 usage 字段回传真实账单口径 token（合批一次即整批；网关缺失时静默）
+      (u) => void this.usageTracker.recordTokens(u.promptTokens, u.completionTokens)
+    );
     // 4.4.1：解密失败（secrets.bin 被同步到其他设备等）引导重新输入，不拿错误 Key 发请求
     if (this.keyStorage.hasDecryptFailures()) {
       new Notice("UUT：已保存的 API Key 在本机解密失败，请在设置页重新输入");
@@ -130,6 +153,11 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     this.statusBarItem = this.addStatusBarItem();
     this.statusBarItem.setAttr("data-uut", "status"); // 带标记，DOMPatcher 白名单跳过
     this.setStatusVisible(false);
+    // v1.3：用量速率状态栏段（1Hz setText；字符串未变化时跳过，避免无意义文本节点更新）
+    this.usageBarItem = this.addStatusBarItem();
+    this.usageBarItem.setAttr("data-uut", "usage");
+    this.usageBarItem.toggleClass("uut-hidden", true);
+    this.registerInterval(window.setInterval(() => this.updateUsageStatusBar(), 1000));
     this.batcher = new BatchTranslator(() => this.provider, {
       windowMs: this.settings.batchWindowMs,
       concurrency: this.settings.maxConcurrentRequests,
@@ -141,7 +169,6 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
       targetLang: this.settings.targetLang,
       glossary: this.settings.glossary,
       getModelId: () => (this.provider as { modelId?: string } | null)?.modelId ?? "",
-      resolveFrom: (pluginId) => this.resolveFrom(pluginId),
       translateVia: (masked, context) => this.batcher.submit(masked, context),
       usageTracker: this.usageTracker,
       monthlyCharBudget: this.settings.monthlyCharBudget,
@@ -162,8 +189,12 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
       () => this.provider,
       this.coordinatorOptions,
       undefined,
-      // Provider 熔断提示（4.2.2：一次熔断只 Notice 一次）
-      () => new Notice("UUT：翻译服务连续失败，已自动暂停 10 分钟（详见设置页）")
+      // Provider 熔断提示（4.2.2：一次熔断只 Notice 一次）；
+      // v1.2 A3：同时启动状态栏倒计时（此前只有一次性 Notice，用户不知道熔断还要多久）
+      () => {
+        new Notice("UUT：翻译服务连续失败，已自动暂停 10 分钟（详见设置页）");
+        this.startCircuitCountdown();
+      }
     );
 
     // 4.4.2：Provider 未配置时拦截器不激活（零 DOM 干预、零网络请求）
@@ -198,6 +229,7 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
 
   onunload(): void {
     // 稳定性要求（2.2）：所有原型劫持完整还原；批量窗口结算与缓存 flush 异步发起、不阻塞卸载（4.2.3）
+    this.stopCircuitCountdown();
     this.commandPatcher?.deactivate();
     this.menuPatcher?.deactivate();
     this.settingPatcher?.deactivate();
@@ -206,6 +238,8 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     this.windowHook?.deactivate();
     void this.batcher.flush();
     void this.cache.flush();
+    // v1.2 B4：用量统计去抖落盘的兜底结算
+    void this.usageTracker.flush();
   }
 
   async saveSettings(): Promise<void> {
@@ -253,6 +287,75 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
   /** 用量统计分页（v1.1.9）：本月日桶合计（逐日明细自 v1.1.9 起记录，历史月份只有月累计） */
   async getUsageMonthStats() {
     return this.usageTracker.monthStats();
+  }
+
+  /** 用量分页转发（v1.3）：会话统计 / 窗口速率 / 今日用量（in/out token 拆分） */
+  usageSessionStats() {
+    return this.usageTracker.sessionStats();
+  }
+
+  usageRate(windowMs: number) {
+    return this.usageTracker.ratePerMinute(windowMs);
+  }
+
+  async usageToday() {
+    return this.usageTracker.todayUsage();
+  }
+
+  /**
+   * v1.3.1 用量文案统一供数（1Hz，状态栏与市场弹窗徽标同源）：
+   * - bar：主窗口状态栏文本——10 分钟无活动返回 null（隐藏），活动时含速率段
+   * - badge：市场弹窗常驻徽标——不设空闲门控（弹窗内唯一消耗视图），速率段仅活动时出现
+   */
+  private async usageStatusTexts(): Promise<{ bar: string | null; badge: string | null }> {
+    if (!this.settings.usageInStatusBar || !this.provider) return { bar: null, badge: null };
+    const last = this.usageTracker.lastActivityAt();
+    const idle = last === null || Date.now() - last > 10 * 60 * 1000;
+    const rate = this.usageTracker.ratePerMinute(60_000);
+    const today = await this.usageTracker.todayUsage();
+    const price = this.settings.providers["openai"]?.pricePerMillion;
+    let badge: string;
+    let ratePart = "";
+    if (this.provider.id === "openai") {
+      const todayTokens = today.inTokens + today.outTokens;
+      if (rate.tokensPerMin >= 1) ratePart = `▲ ${fmtCompact(rate.tokensPerMin)} tok/min · `;
+      badge = `UUT 今日 ${fmtCompact(todayTokens)} tok`;
+      if (price && price.input > 0 && price.output > 0) {
+        const cost = estimateTokenCost(today.inTokens, today.outTokens, {
+          inputPerMillion: price.input,
+          outputPerMillion: price.output,
+        });
+        const currency = this.settings.providers["openai"]?.priceCurrency ?? "¥";
+        badge += ` · ≈${fmtCost(cost, currency)}`;
+      }
+    } else {
+      if (rate.charsPerMin >= 1) ratePart = `▲ ${fmtCompact(rate.charsPerMin)} 字/min · `;
+      badge = `UUT 今日 ${fmtCompact(today.chars)} 字`;
+    }
+    return { bar: idle ? null : `${ratePart}${badge}`, badge };
+  }
+
+  /**
+   * v1.3 用量速率状态栏段（1Hz）：openai 引擎 token 口径（配价时附今日费用估算），
+   * 其他引擎字符口径；10 分钟无活动隐藏。费用仅在用户配置单价后显示（口径可控）。
+   */
+  private async updateUsageStatusBar(): Promise<void> {
+    if (!this.usageBarItem) return;
+    const { bar, badge } = await this.usageStatusTexts();
+    // 市场弹窗徽标同源供数（独立窗口内唯一消耗视图）
+    this.marketplacePatcher?.setUsageLine(badge);
+    if (bar === null) {
+      if (this.lastUsageBarText !== "") {
+        this.usageBarItem.toggleClass("uut-hidden", true);
+        this.lastUsageBarText = "";
+      }
+      return;
+    }
+    if (bar !== this.lastUsageBarText) {
+      this.usageBarItem.setText(bar);
+      this.usageBarItem.toggleClass("uut-hidden", false);
+      this.lastUsageBarText = bar;
+    }
   }
 
   /** 缓存 Tab 实况（v1.1.9）：磁盘缓存文件字节数；文件不存在或读取失败返回 null */
@@ -346,7 +449,12 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
 
   /** 配置变更热生效：重建 Provider 与批量通道、同步 coordinator 参数、按需启停拦截器 */
   private async refreshRuntime(): Promise<void> {
-    this.provider = await createActiveProvider(this.settings, this.keyStorage, this.http);
+    this.provider = await createActiveProvider(
+      this.settings,
+      this.keyStorage,
+      this.http,
+      (u) => void this.usageTracker.recordTokens(u.promptTokens, u.completionTokens)
+    );
     this.batcher = new BatchTranslator(() => this.provider, {
       windowMs: this.settings.batchWindowMs,
       concurrency: this.settings.maxConcurrentRequests,
@@ -362,6 +470,7 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     this.cache.setMaxEntries(this.settings.cacheMaxEntries);
     // v1.1.0：配置变更即重置熔断/负缓存与运行时译态，并全量重扫已渲染界面——修复"改完配置要重启才生效"
     this.coordinator.resetFailures();
+    this.stopCircuitCountdown();
     this.commandPatcher?.resetRuntimeTranslations();
     this.domPatcher?.rescanAllText();
     if (this.settings.enabled && this.provider) {
@@ -490,6 +599,33 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
   /** O-1：状态栏进度提示——在途时显示剩余/已译计数，归零时短暂显示完成（data-uut 标记防自家通道拾取） */
   private statusHideTimer: number | null = null;
 
+  /** v1.2 A3：熔断倒计时定时器（状态栏常驻 mm:ss；到期/复位/卸载清除） */
+  private circuitTimer: number | null = null;
+
+  private startCircuitCountdown(): void {
+    if (this.circuitTimer !== null) return;
+    const tick = () => {
+      const remain = this.coordinator.circuitRemainingMs();
+      if (remain <= 0 || !this.statusBarItem) {
+        this.stopCircuitCountdown();
+        return;
+      }
+      const mm = String(Math.floor(remain / 60_000)).padStart(2, "0");
+      const ss = String(Math.floor((remain % 60_000) / 1000)).padStart(2, "0");
+      this.statusBarItem.setText(`UUT 熔断中 ${mm}:${ss}`);
+      this.setStatusVisible(true);
+    };
+    tick();
+    this.circuitTimer = window.setInterval(tick, 1000);
+  }
+
+  private stopCircuitCountdown(): void {
+    if (this.circuitTimer !== null) {
+      window.clearInterval(this.circuitTimer);
+      this.circuitTimer = null;
+    }
+  }
+
   /** 状态栏显隐（官方审核禁内联 style 赋值，统一 CSS 类切换，v1.1.3） */
   private setStatusVisible(visible: boolean): void {
     this.statusBarItem?.toggleClass("uut-hidden", !visible);
@@ -521,19 +657,6 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     }
   }
 
-  /** 缓存来源维度（4.2.3 / D5）：pluginId@version，核心文本为 core@appVersion */
-  private resolveFrom(pluginId: string): string {
-    if (pluginId === "core") {
-      // R-05：appVersion 内部属性可能为空；v1.1.11 起 UA 兜底因官方审查
-      // navigator 禁令移除，缺失时降级为 "unknown"（见 app-version.ts 注释）
-      const v = resolveObsidianVersion(
-        (this.app as unknown as { appVersion?: string }).appVersion
-      );
-      return `core@${v}`;
-    }
-    const manifests = (
-      this.app as unknown as { plugins?: { manifests?: Record<string, { version?: string }> } }
-    ).plugins?.manifests;
-    return `${pluginId}@${manifests?.[pluginId]?.version ?? ""}`;
-  }
+  /** 缓存来源维度（4.2.3 / D5）已随 v1.2 B1 退役：缓存键已锚定原文文本，
+   *  来源版本失效只误伤升级后未变的条目（整批重译的根因），app-version 模块随之删除 */
 }

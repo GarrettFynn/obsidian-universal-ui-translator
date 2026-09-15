@@ -101,8 +101,10 @@ export class BatchTranslator {
         for (const e of entries) e.reject(new Error("Provider 未配置"));
         return;
       }
-      const batches = this.splitBatches([...groups.keys()]);
+      const batches = this.splitBatches([...groups.keys()], provider);
       const concurrency = this.options.concurrency ?? 3;
+      // v1.3 F3：逐批上报剩余未结算条数——状态栏从"整轮 flush 冻结"变为逐批刷新
+      let remaining = entries.length;
       let idx = 0;
       const workers = Array.from(
         { length: Math.min(concurrency, batches.length) },
@@ -110,6 +112,8 @@ export class BatchTranslator {
           while (idx < batches.length) {
             const batch = batches[idx++];
             await this.runBatch(provider, batch, groups);
+            remaining -= batch.length;
+            this.options.onQueueChange?.(remaining);
           }
         }
       );
@@ -122,9 +126,13 @@ export class BatchTranslator {
     }
   }
 
-  /** 单批上限拆分：条数或字符先达者成批（4.2.2） */
-  private splitBatches(texts: string[]): string[][] {
-    const maxItems = this.options.maxBatchItems ?? 50;
+  /**
+   * 单批上限拆分：条数或字符先达者成批（4.2.2）
+   * 条数上限取「窗口聚合上限与 Provider 声明的 maxBatchSize」的较小值（A4）——
+   * 声明值是 Provider 单请求真实承载上限（如 Custom 模板单条 = 1），不得越过
+   */
+  private splitBatches(texts: string[], provider: TranslationProvider): string[][] {
+    const maxItems = Math.min(this.options.maxBatchItems ?? 50, provider.maxBatchSize);
     const maxChars = this.options.maxBatchChars ?? 4000;
     const batches: string[][] = [];
     let cur: string[] = [];

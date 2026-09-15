@@ -6,7 +6,9 @@ import { TranslationProvider } from "../src/providers/base-provider";
 class RecordingProvider extends TranslationProvider {
   readonly id = "rec";
   readonly name = "Recording";
-  readonly maxBatchSize = 1;
+  // A4 后拆批取 min(聚合上限, maxBatchSize)：mock 声明 50 与缺省聚合上限一致（原 1 会把所有批次拆散）；
+  // 非 readonly——A4 专项用例需要改小声明值
+  maxBatchSize = 50;
   batches: string[][] = [];
   singles: string[] = [];
   batchFailures = 0;
@@ -75,6 +77,15 @@ describe("BatchTranslator（设计文档 4.2.2）", () => {
     expect(p.batches).toEqual([["AAA"], ["BBB", "CC"]]);
   });
 
+  it("A4：单批条数上限与 provider.maxBatchSize 取小值——声明 2 时按对拆分", async () => {
+    const p = new RecordingProvider();
+    p.maxBatchSize = 2; // 模拟声明单请求承载上限为 2 的引擎
+    const bt = setup(p, { maxBatchItems: 50 });
+    ["A", "B", "C", "D", "E"].forEach((t) => void bt.submit(t));
+    await bt.flush();
+    expect(p.batches).toEqual([["A", "B"], ["C", "D"], ["E"]]);
+  });
+
   it("批量失败 → 拆单条重试 1 次成功", async () => {
     const p = new RecordingProvider();
     p.batchFailures = 1;
@@ -140,6 +151,26 @@ describe("BatchTranslator（设计文档 4.2.2）", () => {
     expect(seen[0]).toBe(1);
     expect(seen[1]).toBe(2);
     expect(seen[seen.length - 1]).toBe(0); // 结算归零
+  });
+
+  it("v1.3 F3：多批 flush 期间逐批上报剩余（状态栏不冻结）", async () => {
+    const p = new RecordingProvider();
+    const seen: number[] = [];
+    const bt = new BatchTranslator(() => p, {
+      maxBatchItems: 2,
+      onQueueChange: (n) => seen.push(n),
+    });
+    ["A", "B", "C", "D", "E"].forEach((t) => void bt.submit(t));
+    await bt.flush();
+    // 5 条拆 3 批（2+2+1）：提交期 1..5，flush 期逐批 3 → 1 → 0
+    const settlePhase = seen.slice(5);
+    expect(settlePhase).toContain(3);
+    expect(settlePhase).toContain(1);
+    expect(settlePhase[settlePhase.length - 1]).toBe(0);
+    // 逐批不回升（末尾 flush finally 会再补一次 0，允许相等）
+    for (let i = 1; i < settlePhase.length; i++) {
+      expect(settlePhase[i]).toBeLessThanOrEqual(settlePhase[i - 1]);
+    }
   });
 
   it("4xx 批量失败不拆单条重试（4.2.2 错误分类，E-03）", async () => {
