@@ -24,3 +24,6 @@ coverage/
 
 # 临时文件
 cplist.tmp.json
+
+# agent 会话计划文件（内部工具产物）
+.zcode/
