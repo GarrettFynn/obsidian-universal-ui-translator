@@ -47,7 +47,7 @@ Obsidian 社区插件生态以英文为主，汉化依赖插件作者自觉。�
 
 ### 安装
 
-- **官方社区插件目录**（审核通过后）：设置 → 第三方插件 → 社区插件 → 搜索「Universal UI Translator」
+- **官方社区插件目录**（已上架）：设置 → 第三方插件 → 社区插件 → 搜索「Universal UI Translator」
 - **BRAT（beta 渠道）**：安装 [BRAT](https://github.com/TfTHacker/obsidian42-brat) 插件 → 「Add Beta plugin」→ 粘贴本仓库地址
 - **手动安装**：将 `main.js`、`manifest.json`、`styles.css` 复制到 `<库>/.obsidian/plugins/universal-ui-translator/`
 
@@ -179,7 +179,7 @@ v1.2 起 OpenAI 兼容通道已**合批**（单行短文本 40 条合一次请�
 ```bash
 npm install
 npm run build          # tsc 类型检查 + esbuild（刻意不做 minify）
-npm test               # 159 个单元与集成测试
+npm test               # 190 个单元与集成测试
 npm run test:coverage  # 核心模块行覆盖率 75.9%–100%
 ```
 
@@ -205,19 +205,19 @@ The plugin ships **no translation engine or glossary of its own**. Translation q
 - **Local-first cache (survives upgrades)**: in-memory LRU + on-disk JSON under one shared cap (default 50k entries, adjustable up to 200k; 64 MB on-disk byte ceiling), keyed by text + provider + language + model — opening the same UI twice issues zero API calls. Since v1.2 Obsidian/plugin upgrades **no longer invalidate the cache** (unchanged text keeps hitting), eviction follows most-recent-use, and a `.bak` copy recovers from a corrupted file
 - **Real token metering & cost (v1.3)**: captures the `usage` field returned by the API (billing basis, including per-request system-prompt overhead) — the main-window status bar shows `▲ rate · today · ≈cost`, and the community-plugin browser popup carries the same live badge in its corner; the usage tab adds session rate/peak, today/month cost (enter your own per-million prices) and a dual-basis 30-day chart
 - **Marketplace progress feedback (v1.2)**: the "译" button shows a deterministic `done/total` counter while translating, plus a floating progress bar in the popup window (multi-pass aggregate, fades on completion)
-- **Three display modes**: translated / bilingual (translation with original in brackets) / original, switchable anytime, plus a "临时显示原文/恢复译文" command
+- **Three display modes**: translated / bilingual (translation with original in brackets) / original, switchable anytime, plus a "temporarily show original / restore translation" command
 - **Smart filtering**: skips code, paths, URLs, numbers and already-localized text; placeholder protection with post-translation validation (mismatched placeholders are discarded, never cached)
 - **Cost controls**: 100 ms batch aggregation, a global true in-flight concurrency limit (since v1.2 the setting equals actual requests in flight), per-request timeout (configurable), monthly character budget with automatic circuit-breaker; HTTP 429 no longer trips the breaker (v1.2) and an active breaker shows a live countdown in the status bar
 - **Cache governance (v1.1.9)**: the cache tab explains every action in a what/when/cost format — manual flush, one-click purge of entries that no longer match the current provider/language/model, on-disk file size, export/import sharing
 - **Scope control**: core/community toggles, per-plugin whitelist/blacklist, per-interceptor switches, custom skip-regexes and a user glossary (fixed translations that bypass cache and API)
-- **On-demand marketplace translation**: a "译" button on each community-plugin item translates just that entry — cache hits cost zero API calls
+- **On-demand marketplace translation**: a "译" button on each community-plugin item translates just that entry — cache hits cost zero API calls. Since v1.1.5 the marketplace no longer auto-translates while scrolling (that high-risk toggle ships off) — on-demand is the recommended path
 - **Any target language**: defaults to `zh-CN`; set `ja` / `zh-Hant` / `ko` / `fr` or any language code — the cache is keyed per language, switch anytime
 - **Hot-applied settings**: config changes reset the circuit breaker and rescan the rendered UI instantly — no restart needed; cache auto-flushes to disk (at 100 entries or every 30 s), crash-safe
 - **Privacy by design**: no telemetry, no outbound calls except your configured translation endpoint; API keys encrypted with Electron `safeStorage`
 
 ### Installation
 
-- **Community plugin directory** (once approved): Settings → Community plugins → Browse → search "Universal UI Translator"
+- **Community plugin directory** (listed): Settings → Community plugins → Browse → search "Universal UI Translator"
 - **BRAT (beta channel)**: install the [BRAT](https://github.com/TfTHacker/obsidian42-brat) plugin → "Add Beta plugin" → paste this repository's URL
 - **Manual**: copy `main.js`, `manifest.json`, `styles.css` into `<vault>/.obsidian/plugins/universal-ui-translator/`
 
@@ -236,6 +236,21 @@ The plugin ships **no translation engine or glossary of its own**. Translation q
 | Custom endpoint | URL + request template + response JSONPath — Ollama / LM Studio / any local model, zero cost |
 
 Typical cost: **zero** — the free tiers of all major providers cover UI-text volumes, and local models cost only electricity.
+
+### Cost estimation (DeepSeek flash basis, 2026-09-10 pricing)
+
+Rules of thumb (UI text → tokens): input tokens ≈ English chars / 4; output tokens ≈ chars / 2.5 (a Chinese translation is ~60% of the source length). That is, **every 10k chars of UI ≈ 2,500 input + 4,000 output tokens ≈ ¥0.037 at peak, half that off-peak** (DeepSeek flash pricing since 2026-09-10: input ¥1 / output ¥4 per million tokens off-peak, ×2 at peak).
+
+| Action | Chars | Cost (peak / off-peak) |
+| --- | --- | --- |
+| Translate one marketplace list entry | ≈150 | < ¥0.001, negligible |
+| Translate one plugin README | ≈4,000 | ≈ ¥0.015 / ¥0.007 |
+| Full core UI, one-time (then cached forever) | ≈80k | ≈ ¥0.30 / ¥0.15 |
+| Auto-translate the whole marketplace list (off by default) | ≈300k/round | ≈ ¥1.1 / ¥0.55 per round |
+
+How it stays near zero: ① translations are cached locally — the same text is never billed twice; ② the monthly character budget trips an automatic circuit-breaker; ③ glossary hits bypass the API entirely; ④ a local model (Ollama / LM Studio) is completely free and never leaves your machine. Since v1.2, Obsidian/plugin upgrades no longer invalidate the cache, so there is no periodic re-translation cost.
+
+For users in China, a free-tier walkthrough (Volcano Ark reward program — daily usage refunded as credits) is in the 中文 section above.
 
 ### Usage stats & cache management (v1.1.9+, real token basis in v1.3)
 
@@ -280,7 +295,7 @@ Recommended: thinking off · flash/turbo-tier model · batch window 100 · concu
 ```bash
 npm install
 npm run build          # tsc type-check + esbuild (deliberately not minified)
-npm test               # 159 unit & integration tests
+npm test               # 190 unit & integration tests
 npm run test:coverage  # core modules 75.9%–100% line coverage
 ```
 
