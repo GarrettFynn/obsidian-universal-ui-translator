@@ -1,4 +1,5 @@
 import { HttpClient, TranslationProvider } from "./base-provider";
+import { t } from "../i18n";
 
 export interface AzureProviderOptions {
   apiKey: string;
@@ -31,7 +32,7 @@ export class AzureProvider extends TranslationProvider {
   }
 
   async translateBatch(texts: string[]): Promise<string[]> {
-    if (!this.http) throw new Error("HttpClient 未注入");
+    if (!this.http) throw new Error(t("provider.http-not-injected"));
     if (texts.length === 0) return [];
     const res = await this.http({
       url: `https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&to=${encodeURIComponent(toAzureLang(this.options.targetLang))}`,
@@ -50,12 +51,12 @@ export class AzureProvider extends TranslationProvider {
       translations?: Array<{ text?: string }>;
     }>;
     if (!Array.isArray(data) || data.length !== texts.length) {
-      throw new Error("Azure 响应条数与请求不符");
+      throw new Error(t("provider.azure.count-mismatch"));
     }
     return data.map((item, i) => {
       const out = item.translations?.[0]?.text;
       if (typeof out !== "string" || !out) {
-        throw new Error(`Azure 响应第 ${i} 条缺少 translations[0].text`);
+        throw new Error(t("provider.azure.missing-translation", { n: i }));
       }
       return out;
     });
@@ -65,10 +66,10 @@ export class AzureProvider extends TranslationProvider {
     try {
       const out = await this.translate("Hello");
       return out
-        ? { ok: true, message: `连接成功（试译：${out.slice(0, 20)}）` }
-        : { ok: false, message: "响应为空，请检查 Key 与 Region" };
+        ? { ok: true, message: t("provider.connect-probe-ok", { n: out.slice(0, 20) }) }
+        : { ok: false, message: t("provider.azure.empty-response") };
     } catch (e) {
-      return { ok: false, message: `连通性测试失败：${String(e)}` };
+      return { ok: false, message: t("provider.validate-failed", { n: String(e) }) };
     }
   }
 }

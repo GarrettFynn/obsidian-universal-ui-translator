@@ -1,4 +1,5 @@
 import { HttpClient, TranslationProvider } from "./base-provider";
+import { t } from "../i18n";
 
 export interface GoogleProviderOptions {
   apiKey: string;
@@ -41,7 +42,7 @@ export class GoogleProvider extends TranslationProvider {
   }
 
   async translateBatch(texts: string[]): Promise<string[]> {
-    if (!this.http) throw new Error("HttpClient 未注入");
+    if (!this.http) throw new Error(t("provider.http-not-injected"));
     if (texts.length === 0) return [];
     const res = await this.http({
       url: `https://translation.googleapis.com/language/translate/v2?key=${encodeURIComponent(this.options.apiKey)}`,
@@ -61,13 +62,13 @@ export class GoogleProvider extends TranslationProvider {
     };
     const translations = data.data?.translations;
     if (!translations || translations.length !== texts.length) {
-      throw new Error("Google 响应 translations 数量与请求不符");
+      throw new Error(t("provider.google.count-mismatch"));
     }
-    return translations.map((t, i) => {
-      if (typeof t.translatedText !== "string" || !t.translatedText) {
-        throw new Error(`Google 响应第 ${i} 条缺少 translatedText`);
+    return translations.map((tr, i) => {
+      if (typeof tr.translatedText !== "string" || !tr.translatedText) {
+        throw new Error(t("provider.google.missing-text", { n: i }));
       }
-      return htmlUnescape(t.translatedText);
+      return htmlUnescape(tr.translatedText);
     });
   }
 
@@ -75,10 +76,10 @@ export class GoogleProvider extends TranslationProvider {
     try {
       const out = await this.translate("Hello");
       return out
-        ? { ok: true, message: `连接成功（试译：${out.slice(0, 20)}）` }
-        : { ok: false, message: "响应为空，请检查 API Key" };
+        ? { ok: true, message: t("provider.connect-probe-ok", { n: out.slice(0, 20) }) }
+        : { ok: false, message: t("provider.google.empty-response") };
     } catch (e) {
-      return { ok: false, message: `连通性测试失败：${String(e)}` };
+      return { ok: false, message: t("provider.validate-failed", { n: String(e) }) };
     }
   }
 }

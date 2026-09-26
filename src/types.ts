@@ -74,6 +74,9 @@ export interface PluginSettings {
   communityScopeMigratedV115?: boolean;
   /** v1.3：状态栏用量速率段（token/字符口径 + 今日费用估算），默认开 */
   usageInStatusBar: boolean;
+  /** 1.4：插件界面语言——auto 跟随 Obsidian 界面语言（moment locale 前缀 zh* → zh-CN，否则 en）；
+   *  命令名等 onload 注册期文案重启后生效（设计 4.3 已知边界） */
+  uiLanguage: "auto" | "zh-CN" | "en";
   debugMode: boolean;
 }
 
@@ -102,6 +105,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   },
   interceptors: { command: true, menu: true, setting: true, dom: true, marketplace: true },
   usageInStatusBar: true,
+  uiLanguage: "auto",
   debugMode: false,
 };
 

@@ -1,4 +1,4 @@
-import { Notice, Plugin, requestUrl } from "obsidian";
+import { Notice, Plugin, moment, requestUrl } from "obsidian";
 import { BatchTranslator } from "./src/core/batch-translator";
 import { CacheManager } from "./src/core/cache-manager";
 import { TranslationCoordinator, CoordinatorOptions } from "./src/core/coordinator";
@@ -6,6 +6,7 @@ import { KeyStorage } from "./src/core/key-storage";
 import { Semaphore } from "./src/core/semaphore";
 import { estimateTokenCost, fmtCompact, fmtCost } from "./src/core/format";
 import { FilterEngine } from "./src/filters/filter-engine";
+import { resolveUiLocale, setUiLocale, t } from "./src/i18n";
 import { CommandPatcher } from "./src/interceptors/command-patcher";
 import { formatWriteBack } from "./src/interceptors/display-mode";
 import { DOMPatcher } from "./src/interceptors/dom-patcher";
@@ -57,6 +58,10 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
       (await this.loadData()) as Partial<PluginSettings>
     );
 
+    // 1.4：界面语言 onload 首调（此后每次配置变更经 refreshRuntime 热同步）——
+    // 提前于 v1.1.5 迁移 Notice，使 onload 期间的提示文案同样遵循界面语言
+    setUiLocale(resolveUiLocale(this.settings.uiLanguage, moment.locale()));
+
     // v1.1.5 一次性迁移：communityPlugins 在 <1.1.5 是从未生效的死配置且默认开，
     // 旧 data.json 里的 true 不代表用户真实意图——统一置 false（仅迁移一次，之后尊重手动选择）
     if (!this.settings.communityScopeMigratedV115) {
@@ -65,11 +70,7 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
       this.settings.communityScopeMigratedV115 = true;
       await this.saveData(this.settings);
       if (wasOn) {
-        new Notice(
-          "UUT v1.1.5：社区市场默认不再自动翻译（此前该开关实际未生效，滚动市场列表会持续消耗 API 额度）。" +
-            "逐条翻译请用市场条目上的「译」按钮（缓存命中零成本）；确需自动翻译请到 设置 → 作用域 手动打开",
-          12000
-        );
+        new Notice(t("notice.migrate-v115") + t("notice.migrate-v115-hint"), 12000);
       }
     }
 
@@ -95,7 +96,7 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
             throw: false,
           }),
           this.settings.requestTimeoutMs,
-          "翻译请求"
+          t("common.timeout-request")
         );
         return { status: res.status, text: res.text };
       } finally {
@@ -147,7 +148,7 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     );
     // 4.4.1：解密失败（secrets.bin 被同步到其他设备等）引导重新输入，不拿错误 Key 发请求
     if (this.keyStorage.hasDecryptFailures()) {
-      new Notice("UUT：已保存的 API Key 在本机解密失败，请在设置页重新输入");
+      new Notice(t("notice.key-decrypt-failed"));
     }
     // 4.2.2 批量聚合通道：窗口与并发取用户配置；O-1 队列深度接状态栏进度提示
     this.statusBarItem = this.addStatusBarItem();
@@ -177,13 +178,9 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
       // v1.1.5：cacheEnabled 接线（此前为死配置，缓存读写始终生效）
       isCacheEnabled: () => this.settings.cacheEnabled,
       // 4.2.2 错误分类：Key 失效（401/403）立即引导，不等熔断
-      onAuthFailure: () =>
-        new Notice("UUT：API Key 可能失效（401/403），请检查设置页 API 配置"),
+      onAuthFailure: () => new Notice(t("notice.auth-failed")),
       // v1.1.8：预算超限提示（types.ts 承诺的"超限提示"此前未实现，纯静默 = 用户实测"按钮失效"头号嫌疑）
-      onBudgetExceeded: () =>
-        new Notice(
-          "UUT：本月字符预算已用完，翻译已暂停并回退原文；如需继续请到 设置页 → API 配置 调整月度预算"
-        ),
+      onBudgetExceeded: () => new Notice(t("notice.budget-exceeded")),
     };
     this.coordinator = new TranslationCoordinator(
       this.filter,
@@ -194,7 +191,7 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
       // Provider 熔断提示（4.2.2：一次熔断只 Notice 一次）；
       // v1.2 A3：同时启动状态栏倒计时（此前只有一次性 Notice，用户不知道熔断还要多久）
       () => {
-        new Notice("UUT：翻译服务连续失败，已自动暂停 10 分钟（详见设置页）");
+        new Notice(t("notice.circuit-open"));
         this.startCircuitCountdown();
       }
     );
@@ -208,22 +205,23 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
         window.setTimeout(() => this.prewarmCommands(), 2000)
       );
     } else if (this.settings.enabled && !this.provider) {
-      new Notice("UUT：请先在设置页配置翻译引擎与 API Key");
+      new Notice(t("notice.setup-required"));
     }
 
     this.addSettingTab(new UutSettingTab(this.app, this));
     // 5.1「临时显示原文」命令：切换 original / 原模式（新渲染内容生效；已写 DOM 残留见指令注意事项）
+    // 1.4：命令名注册时求值——切换界面语言后重启生效（Obsidian 命令注册表限制，设计 4.3 已知边界）
     this.addCommand({
       id: "toggle-original",
-      name: "临时显示原文/恢复译文",
+      name: t("command.toggle-original"),
       callback: () => {
         this.settings.displayMode =
           this.settings.displayMode === "original" ? "replace" : "original";
         void this.saveSettings();
         new Notice(
           this.settings.displayMode === "original"
-            ? "UUT：已切换为原文显示（新渲染内容不再回写；缓存继续预热）"
-            : "UUT：已恢复译文显示"
+            ? t("notice.original-on")
+            : t("notice.original-off")
         );
       },
     });
@@ -257,8 +255,8 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
         await this.keyStorage.delete(providerId);
       }
     } catch (e) {
-      console.error("[uut] Key 保存失败：", e);
-      new Notice(`UUT：Key 保存失败：${String(e)}`);
+      console.error(t("common.log-key-save-failed"), e);
+      new Notice(t("notice.key-save-failed", { n: String(e) }));
     }
     await this.refreshRuntime();
   }
@@ -321,7 +319,7 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     if (this.provider.id === "openai") {
       const todayTokens = today.inTokens + today.outTokens;
       if (rate.tokensPerMin >= 1) ratePart = `▲ ${fmtCompact(rate.tokensPerMin)} tok/min · `;
-      badge = `UUT 今日 ${fmtCompact(todayTokens)} tok`;
+      badge = t("status.today-tokens", { n: fmtCompact(todayTokens) });
       if (price && price.input > 0 && price.output > 0) {
         const cost = estimateTokenCost(today.inTokens, today.outTokens, {
           inputPerMillion: price.input,
@@ -331,8 +329,9 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
         badge += ` · ≈${fmtCost(cost, currency)}`;
       }
     } else {
-      if (rate.charsPerMin >= 1) ratePart = `▲ ${fmtCompact(rate.charsPerMin)} 字/min · `;
-      badge = `UUT 今日 ${fmtCompact(today.chars)} 字`;
+      if (rate.charsPerMin >= 1)
+        ratePart = t("status.rate-chars", { n: fmtCompact(rate.charsPerMin) });
+      badge = t("status.today-chars", { n: fmtCompact(today.chars) });
     }
     return { bar: idle ? null : `${ratePart}${badge}`, badge };
   }
@@ -375,7 +374,7 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
   /** 缓存 Tab「清理失效条目」（v1.1.9）：删除与当前 引擎+语言+模型 不匹配的条目（换模型后旧条目永不命中） */
   async purgeStaleCacheEntries(): Promise<{ ok: boolean; message: string }> {
     if (!this.provider) {
-      return { ok: false, message: "未配置翻译引擎，无法判定当前配置，未做任何清理" };
+      return { ok: false, message: t("common.purge-no-engine") };
     }
     const model = (this.provider as { modelId?: string }).modelId ?? "";
     const removed = this.cache.purgeMismatched(
@@ -386,7 +385,7 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     await this.cache.flush();
     return {
       ok: true,
-      message: `已清理 ${removed} 条与当前引擎/语言/模型不匹配的缓存条目`,
+      message: t("status.cache-purged", { n: removed }),
     };
   }
 
@@ -397,10 +396,13 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
       const at = this.cache.stats().lastFlushAt;
       return {
         ok: true,
-        message: `缓存已落盘（${at ? new Date(at).toLocaleTimeString() : "刚刚"}），共 ${this.cache.stats().size} 条`,
+        message: t("status.cache-flushed", {
+          time: at ? new Date(at).toLocaleTimeString() : t("status.just-now"),
+          n: this.cache.stats().size,
+        }),
       };
     } catch (e) {
-      return { ok: false, message: `落盘失败：${String(e)}` };
+      return { ok: false, message: t("status.flush-failed", { n: String(e) }) };
     }
   }
 
@@ -413,9 +415,9 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
         path,
         await this.io.read(`${this.manifest.dir}/translation-cache.json`)
       );
-      return { ok: true, message: `缓存已导出到库根目录：${path}` };
+      return { ok: true, message: t("status.cache-exported", { n: path }) };
     } catch (e) {
-      return { ok: false, message: `导出失败：${String(e)}` };
+      return { ok: false, message: t("status.export-failed", { n: String(e) }) };
     }
   }
 
@@ -425,7 +427,7 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     try {
       raw = JSON.parse(text);
     } catch {
-      return { ok: false, message: "导入失败：不是合法 JSON 文件" };
+      return { ok: false, message: t("status.import-bad-json") };
     }
     const file = raw as { schemaVersion?: unknown; entries?: unknown };
     if (
@@ -436,21 +438,23 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     ) {
       return {
         ok: false,
-        message: `导入失败：schemaVersion 不受支持（当前支持 ≤ ${CACHE_SCHEMA_VERSION}）或缺少 entries`,
+        message: t("status.import-schema-unsupported", { n: CACHE_SCHEMA_VERSION }),
       };
     }
     const count = this.cache.importEntries(file.entries as Record<string, CacheEntry>);
     await this.cache.flush();
-    return { ok: true, message: `导入完成：${count} 条缓存条目已合并` };
+    return { ok: true, message: t("status.import-done", { n: count }) };
   }
 
   async testActiveProvider(): Promise<{ ok: boolean; message: string }> {
-    if (!this.provider) return { ok: false, message: "未配置翻译引擎或 API Key" };
+    if (!this.provider) return { ok: false, message: t("common.no-engine-or-key") };
     return this.provider.validateConfig();
   }
 
   /** 配置变更热生效：重建 Provider 与批量通道、同步 coordinator 参数、按需启停拦截器 */
   private async refreshRuntime(): Promise<void> {
+    // 1.4：界面语言热生效（跟随/中文/英文切换即生效；命令名重启生效为已知边界）
+    setUiLocale(resolveUiLocale(this.settings.uiLanguage, moment.locale()));
     this.provider = await createActiveProvider(
       this.settings,
       this.keyStorage,
@@ -614,7 +618,7 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
       }
       const mm = String(Math.floor(remain / 60_000)).padStart(2, "0");
       const ss = String(Math.floor((remain % 60_000) / 1000)).padStart(2, "0");
-      this.statusBarItem.setText(`UUT 熔断中 ${mm}:${ss}`);
+      this.statusBarItem.setText(t("status.circuit-countdown", { n: mm, m: ss }));
       this.setStatusVisible(true);
     };
     tick();
@@ -641,12 +645,12 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     }
     if (pending > 0) {
       const done = this.batcher.stats().completed;
-      this.statusBarItem.setText(`UUT 翻译中… 剩 ${pending}（已译 ${done}）`);
+      this.statusBarItem.setText(t("status.translating", { n: pending, m: done }));
       this.setStatusVisible(true);
     } else {
       const done = this.batcher.stats().completed;
       if (done > 0) {
-        this.statusBarItem.setText(`UUT ✓ 本会话已译 ${done} 条`);
+        this.statusBarItem.setText(t("status.session-done", { n: done }));
         this.setStatusVisible(true);
         // v1.1.0：完成提示停留 5 秒后隐藏
         this.statusHideTimer = window.setTimeout(() => {

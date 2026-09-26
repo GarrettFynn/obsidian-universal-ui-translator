@@ -1,6 +1,7 @@
 import { CacheManager } from "./cache-manager";
 import { FilterEngine } from "../filters/filter-engine";
 import { TranslationProvider } from "../providers/base-provider";
+import { t } from "../i18n";
 import type { TranslateContext } from "../types";
 
 const NEGATIVE_TTL_MS = 5 * 60 * 1000; // 负缓存：失败文本 5 分钟内不再请求（4.2.2）
@@ -135,7 +136,7 @@ export class TranslationCoordinator {
       void this.options.usageTracker?.record(masked.length, restored.length);
       if (!FilterEngine.placeholdersIntact(text, restored)) {
         // 占位符被改写：丢弃译文、回退原文、不写缓存
-        return { text, outcome: "failed", error: "译文占位符被改写" };
+        return { text, outcome: "failed", error: t("common.placeholder-rewritten") };
       }
       if (cacheOn) {
         this.cache.set(key, {
@@ -159,7 +160,7 @@ export class TranslationCoordinator {
       }
       // R-33：失败原因上 Console（每段连续失败只记前 3 条，避免大批量刷屏）
       if (this.consecutiveFailures < 3) {
-        console.warn(`[uut] 翻译请求失败：${String(e).slice(0, 160)}`);
+        console.warn(t("common.log-translate-failed", { n: String(e).slice(0, 160) }));
       }
       this.noteFailure(text, e);
       return { text, outcome: "failed", error: String(e).slice(0, 160) };

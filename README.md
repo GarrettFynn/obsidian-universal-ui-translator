@@ -35,13 +35,14 @@ Obsidian 社区插件生态以英文为主，汉化依赖插件作者自觉。�
 - **token 实测统计与费用（v1.3）**：直接采集 API 返回的 usage 字段（账单口径，含每请求 system prompt 开销）——主窗口状态栏常驻 `▲ 速率 · 今日 tokens · ≈费用`，社区市场弹窗右下角同源徽标；用量页有会话速率/峰值、今日/本月费用（填入你的单价即显示）与近 30 天双口径图表
 - **市场翻译进度反馈（v1.2）**：「译」按钮显示确定型 `已译/总数` 计数，弹窗右下角悬浮进度条（多趟聚合、完成即淡出）——长 README 翻到哪一目了然
 - **三种显示模式**：纯译文 / 双语对照 / 原文，随时切换，另有「临时显示原文/恢复译文」命令
-- **智能过滤**：跳过代码、路径、URL、数字、已本地化文本；占位符保护 + 译后校验（占位符不一致的译文直接丢弃、不进缓存）
+- **智能过滤**：跳过代码、路径、URL、数字、已本地化文本；占位符保护 + 译后校验（占位符不一致的译文直接丢弃、不进缓存）；嵌套重译防线已泛化至全部目标语言（v1.4）——译文含目标语言文字 ≥2 字符即拒绝送译，双语回写产物另设结构防线
 - **成本控制**：100ms 批量聚合、全局真实在途并发限制（v1.2 起设置值=实际请求数）、单请求超时（可配置）、月度字符预算自动熔断；429 限流不计入熔断（v1.2），熔断期间状态栏常驻倒计时
 - **缓存治理（v1.1.9）**：缓存分页逐项写清"是什么 / 什么时候用 / 代价"——立即落盘、按当前引擎/语言/模型一键清理失效条目、磁盘文件实况、导出/导入共享
 - **作用域控制**：核心/社区开关、插件白名单/黑名单、拦截器独立开关、自定义跳过正则与术语表（固定译法优先于缓存与 API）
 - **社区插件市场按需翻译（核心功能）**：列表条目与详情面板（README 全文）各有「译」按钮，点哪条译哪条，缓存命中零成本——v1.1.5 起市场默认**不再**自动全量翻译（滚动列表会持续消耗 API），逐条按需是唯一推荐路径
 - **费用透明**：设置页逐项标注 API 消耗风险与量级估算；完整折算模型见下方「费用估算」专节
-- **目标语言任意**：默认简体中文，可填 `ja` / `zh-Hant` / `ko` / `fr` 等任意语言代码；缓存按语言隔离，随时切换互不影响
+- **目标语言任意**：默认简体中文，可填 `ja` / `zh-Hant` / `ko` / `fr` 等任意语言代码，常用 12 语言快速下拉即选即存；缓存按语言隔离，随时切换互不影响
+- **插件界面语言（v1.4）**：跟随 Obsidian / 中文 / English 三档可选——英文界面为全量覆盖包（250 键），命令名、状态栏、设置页与错误消息全覆盖；默认跟随 Obsidian，中文默认体验零回归
 - **配置热生效**：改配置即重置熔断并全量重扫界面，无需重启；缓存自动落盘（满 100 条或隔 30 秒），崩溃最多丢 30 秒译文
 - **隐私优先**：无遥测、无外发请求（除你配置的翻译端点）；API Key 经 safeStorage 加密
 
@@ -179,7 +180,7 @@ v1.2 起 OpenAI 兼容通道已**合批**（单行短文本 40 条合一次请�
 ```bash
 npm install
 npm run build          # tsc 类型检查 + esbuild（刻意不做 minify）
-npm test               # 190 个单元与集成测试
+npm test               # 245 个单元与集成测试
 npm run test:coverage  # 核心模块行覆盖率 75.9%–100%
 ```
 
@@ -206,12 +207,13 @@ The plugin ships **no translation engine or glossary of its own**. Translation q
 - **Real token metering & cost (v1.3)**: captures the `usage` field returned by the API (billing basis, including per-request system-prompt overhead) — the main-window status bar shows `▲ rate · today · ≈cost`, and the community-plugin browser popup carries the same live badge in its corner; the usage tab adds session rate/peak, today/month cost (enter your own per-million prices) and a dual-basis 30-day chart
 - **Marketplace progress feedback (v1.2)**: the "译" button shows a deterministic `done/total` counter while translating, plus a floating progress bar in the popup window (multi-pass aggregate, fades on completion)
 - **Three display modes**: translated / bilingual (translation with original in brackets) / original, switchable anytime, plus a "temporarily show original / restore translation" command
-- **Smart filtering**: skips code, paths, URLs, numbers and already-localized text; placeholder protection with post-translation validation (mismatched placeholders are discarded, never cached)
+- **Smart filtering**: skips code, paths, URLs, numbers and already-localized text; placeholder protection with post-translation validation (mismatched placeholders are discarded, never cached); the nested re-translation guard now covers all target languages (v1.4) — text containing 2 or more characters of the target script is rejected, and bilingual write-back output is blocked by a structural rule
 - **Cost controls**: 100 ms batch aggregation, a global true in-flight concurrency limit (since v1.2 the setting equals actual requests in flight), per-request timeout (configurable), monthly character budget with automatic circuit-breaker; HTTP 429 no longer trips the breaker (v1.2) and an active breaker shows a live countdown in the status bar
 - **Cache governance (v1.1.9)**: the cache tab explains every action in a what/when/cost format — manual flush, one-click purge of entries that no longer match the current provider/language/model, on-disk file size, export/import sharing
 - **Scope control**: core/community toggles, per-plugin whitelist/blacklist, per-interceptor switches, custom skip-regexes and a user glossary (fixed translations that bypass cache and API)
 - **On-demand marketplace translation**: a "译" button on each community-plugin item translates just that entry — cache hits cost zero API calls. Since v1.1.5 the marketplace no longer auto-translates while scrolling (that high-risk toggle ships off) — on-demand is the recommended path
-- **Any target language**: defaults to `zh-CN`; set `ja` / `zh-Hant` / `ko` / `fr` or any language code — the cache is keyed per language, switch anytime
+- **Any target language**: defaults to `zh-CN`; set `ja` / `zh-Hant` / `ko` / `fr` or any language code, with a quick dropdown of 12 common languages — the cache is keyed per language, switch anytime
+- **Plugin UI language (v1.4)**: follow Obsidian / Chinese / English — the English UI is a full coverage pack (250 keys) spanning command names, the status bar, settings pages and error messages; defaults to following Obsidian, and the default Chinese experience is unchanged
 - **Hot-applied settings**: config changes reset the circuit breaker and rescan the rendered UI instantly — no restart needed; cache auto-flushes to disk (at 100 entries or every 30 s), crash-safe
 - **Privacy by design**: no telemetry, no outbound calls except your configured translation endpoint; API keys encrypted with Electron `safeStorage`
 
@@ -295,7 +297,7 @@ Recommended: thinking off · flash/turbo-tier model · batch window 100 · concu
 ```bash
 npm install
 npm run build          # tsc type-check + esbuild (deliberately not minified)
-npm test               # 190 unit & integration tests
+npm test               # 245 unit & integration tests
 npm run test:coverage  # core modules 75.9%–100% line coverage
 ```
 

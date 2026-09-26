@@ -1,5 +1,6 @@
 import { HttpClient, HttpRequest, TranslationProvider } from "./base-provider";
 import { buildUiTranslationPrompt } from "./openai-provider";
+import { t } from "../i18n";
 
 export interface CustomProviderOptions {
   targetLang: string;
@@ -45,7 +46,8 @@ export function extractByPath(data: unknown, path: string): string | null {
 /** 自定义 HTTP 端点（设计文档 4.3.2 Custom：兼容 Ollama / LM Studio 等本地模型，零成本） */
 export class CustomProvider extends TranslationProvider {
   readonly id = "custom";
-  readonly name = "自定义端点";
+  /** 1.4 批次五：name 改 t()（构造期解析，随 refreshRuntime 重建热生效） */
+  readonly name = t("provider.custom.name");
   readonly maxBatchSize = 1;
 
   constructor(http: HttpClient, private options: CustomProviderOptions) {
@@ -57,7 +59,7 @@ export class CustomProvider extends TranslationProvider {
   }
 
   async translate(text: string, ctx?: { context?: string }): Promise<string> {
-    if (!this.http) throw new Error("HttpClient 未注入");
+    if (!this.http) throw new Error(t("provider.http-not-injected"));
     const req = this.buildRequest(text, ctx);
     const res = await this.http(req);
     if (res.status !== 200) {
@@ -65,7 +67,9 @@ export class CustomProvider extends TranslationProvider {
     }
     const out = extractByPath(JSON.parse(res.text), this.options.responsePath ?? "choices.0.message.content");
     if (!out || !out.trim()) {
-      throw new Error(`Custom 响应按路径 ${this.options.responsePath} 未提取到译文`);
+      throw new Error(
+        t("provider.custom.path-no-text", { path: String(this.options.responsePath) })
+      );
     }
     return out.trim();
   }
@@ -103,10 +107,10 @@ export class CustomProvider extends TranslationProvider {
     try {
       const out = await this.translate("Hello");
       return out
-        ? { ok: true, message: `连接成功（试译：${out.slice(0, 20)}）` }
-        : { ok: false, message: "响应为空，请检查响应路径配置" };
+        ? { ok: true, message: t("provider.connect-probe-ok", { n: out.slice(0, 20) }) }
+        : { ok: false, message: t("provider.custom.empty-response") };
     } catch (e) {
-      return { ok: false, message: `连通性测试失败：${String(e)}` };
+      return { ok: false, message: t("provider.validate-failed", { n: String(e) }) };
     }
   }
 }

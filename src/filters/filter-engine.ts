@@ -8,12 +8,41 @@
  * 3 文件路径 → 拒绝
  * 4 URL / URI → 拒绝
  * 5 不含连续 2 个拉丁字母 → 拒绝
- * 5b CJK 表意字符数 ≥ 拉丁字母数 → 拒绝（R-06：已本地化混合文本，送译只返回原文）
- * 5c v1.1.5 嵌套乱码防线（目标语言为 zh 系时）：文本含 ≥2 个 CJK 表意字符即拒绝——
- *    UI 原文为英文，含中文说明是双语回写产物或用户内容，送译只会被 LLM 嵌套再翻
+ * 5b CJK 表意字符数 ≥ 拉丁字母数 → 拒绝（R-06：已本地化混合文本，送译只返回原文）——
+ *    语言无关的基线防线；代价：译文与原文拉丁字母相当的形态放行，交给 5c/5d 收口
+ * 5c 1.4 泛化（原 v1.1.5 仅 zh 系）：目标语言命中 SCRIPT_RANGES 语言族时，文本含
+ *    ≥2 个目标脚本字符即拒绝——双语回写产物"译文 (原文)"的拉丁字母往往多于目标脚本
+ *    字符、可绕过 5b，此规则从结构上杜绝嵌套再翻。zh 语义与 v1.1.5 逐位一致；
+ *    ja/ko/ar 从此受保护。代价：英文原文含 ≥2 个目标脚本字符将被拦（如目标 ja 时的
+ *    「Kanban board 看板」）——罕见，Spike 1 已量化（zh/ja 各 2/30 hardCase）
+ * 5d 1.4 新增（Spike 1 D3b，无语言门槛）：文本以 ASCII 括号 "(...)" 结尾且含非 ASCII
+ *    字符 → 拒绝——双语回写产物的结构特征，收口 5c"≥2 字符"对单汉字标签
+ *    （"译 (Translate)"）的盲区；代价：原文含变音符且括号结尾的罕见形态会被拦，
+ *    合法括号尾英文（全 ASCII）零误杀（Spike 1 语料实测）
  * 6 含占位符 → 放行，占位符 token 化保护后送译，译后校验（见静态方法组）
  * 7 默认 → 放行
  */
+
+/** 目标语言 → 目标脚本字符区间；键按语言代码前缀匹配（"zh-Hant" → zh）。
+ *  注意：ko/ar 不含 CJK——区间表按语言定制，禁止一刀切（Spike 1 实测）。 */
+const SCRIPT_RANGES: Readonly<Record<string, RegExp>> = {
+  zh: /[\u4e00-\u9fff\u3400-\u4dbf]/g,
+  ja: /[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u309f\u30a0-\u30ff\u31f0-\u31ff]/g,
+  ko: /[\uac00-\ud7af\u1100-\u11ff\u3130-\u318f]/g,
+  ar: /[\u0600-\u06ff\u0750-\u077f\ufb50-\ufc0f\ufe70-\ufefc]/g,
+};
+
+/** 目标语言 → 语言族键：trim+lowercase 后按 SCRIPT_RANGES 键前缀匹配（"zh-Hant" → "zh"）；
+ *  无区间语言（fr/es/de 等拉丁语系、西里尔等）返回 null。1.4 起供 openai-provider
+ *  做 Prompt Profile 族归一复用（设计 3.1 指定的共享位置）。 */
+export function scriptFamilyOf(lang: string): string | null {
+  const l = lang.trim().toLowerCase();
+  for (const key of Object.keys(SCRIPT_RANGES)) {
+    if (l.startsWith(key)) return key;
+  }
+  return null;
+}
+
 export class FilterEngine {
   /** 单条可送译文本长度上限（字符）；超出拒绝送译（成本与缓存硬上限，v1.1.5） */
   static readonly MAX_TRANSLATABLE_CHARS = 2000;
@@ -65,9 +94,17 @@ export class FilterEngine {
     const latinCount = (t.match(/[A-Za-z]/g) ?? []).length;
     const cjkCount = (t.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g) ?? []).length;
     if (cjkCount >= 2 && cjkCount >= latinCount) return false;
-    // 规则 5c（v1.1.5）：目标语言为 zh 系时，含 ≥2 个 CJK 字符即拒绝——
-    // 双语回写产物"译文 (原文)"的拉丁字母往往多于汉字、可绕过 5b，此规则从结构上杜绝嵌套再翻
-    if (this.targetLang.startsWith("zh") && cjkCount >= 2) return false;
+    // 规则 5c（1.4 泛化，原 v1.1.5 仅 zh）：目标语言命中脚本区间表时，含 ≥2 个目标脚本
+    // 字符即拒绝——双语回写产物"译文 (原文)"可绕过 5b，此规则从结构上杜绝嵌套再翻；
+    // zh 走的区间与旧实现逐位一致，拉丁语系等无区间语言不启用（scriptFamilyOf 返回 null）
+    const family = scriptFamilyOf(this.targetLang);
+    if (family !== null) {
+      const targetScriptCount = (t.match(SCRIPT_RANGES[family]) ?? []).length;
+      if (targetScriptCount >= 2) return false;
+    }
+    // 规则 5d（1.4 新增，Spike 1 D3b，无语言门槛）：以 ASCII 括号 "(...)" 结尾且含非
+    // ASCII 字符 → 拒绝——双语回写产物的结构特征，收口 5c 对单汉字标签的盲区
+    if (/\([^()]*\)\s*$/.test(t) && /[^\x20-\x7e]/.test(t)) return false;
     // 规则 7：默认放行
     return true;
   }

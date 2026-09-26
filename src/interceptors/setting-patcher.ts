@@ -1,5 +1,6 @@
 import { Notice, Setting } from "obsidian";
 import { TranslationCoordinator } from "../core/coordinator";
+import { t } from "../i18n";
 
 type FormatFn = (translated: string, original: string) => string | null;
 
@@ -27,14 +28,14 @@ export class SettingPatcher {
     const proto = Setting.prototype as unknown as Record<string, unknown>;
     for (const key of ["setName", "setDesc", "setHeading"]) {
       if (typeof proto[key] !== "function") {
-        new Notice("UUT：设置面板通道翻译已停用（Setting 特征检测失败）");
+        new Notice(t("setting.patcher.disabled"));
         return false;
       }
     }
     this.wrapNameLike("setName");
     this.wrapNameLike("setHeading");
     this.wrapSetDesc();
-    this.debug("SettingPatcher 已激活");
+    this.debug(t("setting.patcher.activated"));
     return true;
   }
 

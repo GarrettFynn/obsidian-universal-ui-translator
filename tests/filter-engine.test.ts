@@ -76,7 +76,7 @@ describe("FilterEngine.shouldTranslate 规则链", () => {
     expect(zh.shouldTranslate("Best plugin ever")).toBe(true);
   });
 
-  it("规则 5c：非 zh 目标不启用（保持 5b 原行为）；setTargetLang 热切换生效", () => {
+  it("规则 5c：拉丁目标不启用（保持 5b 原行为）；setTargetLang 热切换生效", () => {
     const en = new FilterEngine([], "en");
     expect(en.shouldTranslate("Auto-save 自动保存")).toBe(true); // 5b 放行
     expect(en.shouldTranslate("重新加载 Obsidian（不保存当前编辑内容）")).toBe(false); // 5b 拦截
@@ -84,7 +84,39 @@ describe("FilterEngine.shouldTranslate 规则链", () => {
     en.setTargetLang("zh-Hant");
     expect(en.shouldTranslate("Auto-save 自动保存")).toBe(false);
     en.setTargetLang("ja");
-    expect(en.shouldTranslate("Auto-save 自动保存")).toBe(true);
+    // 1.4 行为变更：5c 泛化（P0 修复本体）——ja 目标下双语产物被脚本区间拦截
+    expect(en.shouldTranslate("Auto-save 自动保存")).toBe(false);
+  });
+
+  it("规则 5c：zh-Hant 等前缀归一进 zh 族（1.4 泛化）", () => {
+    expect(new FilterEngine([], "zh-Hant").shouldTranslate("Auto-save 自动保存")).toBe(false);
+    expect(new FilterEngine([], " ZH-tw ").shouldTranslate("Auto-save 自动保存")).toBe(false);
+  });
+
+  it("规则 5c：ko / ar 目标语言拒绝目标脚本混合译文（1.4 泛化）", () => {
+    expect(new FilterEngine([], "ko").shouldTranslate("PDF로 내보내기")).toBe(false);
+    expect(new FilterEngine([], "ko").shouldTranslate("URL 복사")).toBe(false); // 恰为 2：阈值边界
+    expect(new FilterEngine([], "ar").shouldTranslate("تصدير PDF")).toBe(false);
+    expect(new FilterEngine([], "ar").shouldTranslate("نسخ URL")).toBe(false);
+  });
+
+  it("规则 5c：fr / es 等拉丁目标不启用脚本检测（防线依赖 Prompt Profile 规则 6）", () => {
+    expect(new FilterEngine([], "fr").shouldTranslate("Auto-save 自动保存")).toBe(true);
+    expect(new FilterEngine([], "es").shouldTranslate("Auto-save 自动保存")).toBe(true);
+  });
+
+  it("规则 5d：括号结尾且含非 ASCII 拒绝（无语言门槛）；全 ASCII 括号尾放行（两态）", () => {
+    // 单汉字标签双语产物——5c"≥2 字符"盲区的收口样本（Spike 1 D3b）
+    expect(fe.shouldTranslate("译 (Translate)")).toBe(false);
+    expect(fe.shouldTranslate("保存 (Save) ")).toBe(false); // 括号后仅空白同样命中（trim 口径）
+    // 合法括号尾英文（全 ASCII）零误杀
+    expect(fe.shouldTranslate("Graph view (beta)")).toBe(true);
+    expect(fe.shouldTranslate("Sync (experimental)")).toBe(true);
+  });
+
+  it("规则 5c/5d：空 targetLang 下 5d 生效而 5c 不启用（设计 2.3-4）", () => {
+    expect(fe.shouldTranslate("设置 (Settings)")).toBe(false); // 5d 无语言门槛
+    expect(fe.shouldTranslate("Auto-save 自动保存")).toBe(true); // 5b 放行，且无族不启用 5c
   });
 });
 

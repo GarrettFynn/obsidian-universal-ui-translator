@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-09-26
+
+国际化一期：非 zh 目标嵌套重译根治 + 插件自身英文 UI；中文默认体验零回归（文案逐字对账）。设计依据：`文档/0926-1510-1.4国际化一期设计_v1.0.md`。
+
+### Added
+
+- **插件界面语言**：设置页基础页新增「插件界面语言」下拉（跟随 Obsidian / 中文 / English，默认跟随 Obsidian）——命令名、状态栏、Notice、设置页、市场「译」按钮与五引擎错误消息全部接入 i18n 框架；English 为全量覆盖包（250 键，与中文键集逐一对应）；中文默认体验零回归，zh-CN 文案与 1.3.2 逐字对账
+- **目标语言常用语言快速下拉**：设置页「目标语言」文本框上方新增 12 种常用语言快速选择（zh-CN / zh-Hant / en / ja / ko / fr / de / es / pt / ru / ar / hi），选中即写入并保存，自由输入保留；变更成功保存后 Notice 提示（含"缓存按语言隔离，切回零成本"）
+- **Prompt Profile（按目标语言的简洁性规则表）**：OpenAI 兼容通道的翻译提示词按目标语言脚本族切换简洁性规则（zh/ja/ko/ar/拉丁语系各有专属措辞，未知语言回退通用默认）；拉丁语系依赖"已本地化原样返回"兜底防嵌套
+
+### Fixed
+
+- **嵌套重译防线泛化（P0）**：原"仅 zh 目标语言"的过滤器规则 5c 泛化为——目标语言命中对应文字系统（zh/ja/ko/ar）时，含 ≥2 个该文字字符即拒绝送译。ja 因假名在汉字计数规则下是盲区，此前双语模式下实测 10/10 重译；另新增双语回写产物结构防线（文本以括号结尾且含非 ASCII 字符即拒绝，收口"单汉字标签"盲区）；ja 既有断言按新行为反转
+
 ## [1.3.2] - 2026-09-15
 
 官方目录自动审查合规修复：1.3.1 因 manifest 描述含禁用词 "Obsidian"（目录上下文冗余）被判 Failed。顺手清零三处低成本警告；跨窗口 createElement 与声明式设置为有意设计/另行排期，未动。

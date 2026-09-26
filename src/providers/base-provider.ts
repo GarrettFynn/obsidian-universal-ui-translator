@@ -5,6 +5,8 @@
  * - translateBatch 默认实现：全量并发逐条翻译保序；支持原生批量的子类覆盖
  *   （真实在途上限由装配层 http 信号量统一封顶，A2）
  */
+import { t } from "../i18n";
+
 export interface HttpRequest {
   url: string;
   method: string;
@@ -20,12 +22,17 @@ export interface HttpResponse {
 /** 真实环境适配：`(req) => requestUrl(req).then((r) => ({ status: r.status, text: r.text }))` */
 export type HttpClient = (req: HttpRequest) => Promise<HttpResponse>;
 
-/** 单请求超时包装（4.2.2 / R-23）：超时 reject，由调用方按失败处理（负缓存/熔断） */
-export function withTimeout<T>(p: Promise<T>, ms: number, label = "请求"): Promise<T> {
+/** 单请求超时包装（4.2.2 / R-23）：超时 reject，由调用方按失败处理（负缓存/熔断）。
+ *  1.4 批次五：默认 label 与超时消息改 t()（reject 回调内构造 Error 时解析） */
+export function withTimeout<T>(
+  p: Promise<T>,
+  ms: number,
+  label: string = t("provider.request")
+): Promise<T> {
   return Promise.race([
     p,
     new Promise<never>((_, reject) =>
-      window.setTimeout(() => reject(new Error(`${label}超时（${ms}ms）`)), ms)
+      window.setTimeout(() => reject(new Error(t("provider.timeout", { label, ms }))), ms)
     ),
   ]);
 }

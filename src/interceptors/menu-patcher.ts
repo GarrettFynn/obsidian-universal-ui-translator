@@ -1,5 +1,6 @@
 import { Menu, MenuItem, Notice } from "obsidian";
 import { TranslationCoordinator } from "../core/coordinator";
+import { t } from "../i18n";
 
 type FormatFn = (translated: string, original: string) => string | null;
 
@@ -25,7 +26,7 @@ export class MenuPatcher {
   activate(): boolean {
     const proto = Menu.prototype as unknown as Record<string, unknown>;
     if (typeof proto.addItem !== "function") {
-      new Notice("UUT：菜单通道翻译已停用（addItem 特征检测失败）");
+      new Notice(t("menu.patcher.disabled"));
       return false;
     }
     const originalAddItem = proto.addItem as Menu["addItem"];
@@ -37,7 +38,7 @@ export class MenuPatcher {
         return cb(item);
       });
     };
-    this.debug("MenuPatcher 已激活");
+    this.debug(t("menu.patcher.activated"));
     return true;
   }
 

@@ -1,25 +1,57 @@
-import { App, Notice, PluginSettingTab, Setting } from "obsidian";
+import {
+  App,
+  DropdownComponent,
+  Notice,
+  PluginSettingTab,
+  Setting,
+  TextComponent,
+} from "obsidian";
 import type UniversalUiTranslatorPlugin from "../../main";
 import { estimateTokenCost, fmtCompact, fmtCost } from "../core/format";
+import { t } from "../i18n";
 
 type TabId = "general" | "api" | "usage" | "scope" | "cache" | "advanced";
 
-const TABS: Array<{ id: TabId; label: string }> = [
-  { id: "general", label: "基础" },
-  { id: "api", label: "API 配置" },
-  { id: "usage", label: "用量统计" },
-  { id: "scope", label: "作用域" },
-  { id: "cache", label: "缓存" },
-  { id: "advanced", label: "高级" },
+/**
+ * 1.4 批次四：文案键化——数组只保留 id 与键名，label 渲染时经 t() 解析。
+ * 禁止在模块加载期求值 t()（模块加载早于 uiLanguage 读取，加载期解析会冻结 locale）。
+ */
+const TABS: Array<{ id: TabId; key: string }> = [
+  { id: "general", key: "settings.tab.general" },
+  { id: "api", key: "settings.tab.api" },
+  { id: "usage", key: "settings.tab.usage" },
+  { id: "scope", key: "settings.tab.scope" },
+  { id: "cache", key: "settings.tab.cache" },
+  { id: "advanced", key: "settings.tab.advanced" },
 ];
 
-const PROVIDERS: Array<{ id: string; label: string }> = [
-  { id: "openai", label: "OpenAI 兼容接口" },
-  { id: "deepl", label: "DeepL" },
-  { id: "google", label: "Google Cloud Translation" },
-  { id: "azure", label: "Azure Translator" },
-  { id: "custom", label: "自定义端点（本地模型）" },
+const PROVIDERS: Array<{ id: string; key: string }> = [
+  { id: "openai", key: "settings.provider.openai" },
+  { id: "deepl", key: "settings.provider.deepl" },
+  { id: "google", key: "settings.provider.google" },
+  { id: "azure", key: "settings.provider.azure" },
+  { id: "custom", key: "settings.provider.custom" },
 ];
+
+/**
+ * 1.4 批次五（设计五节）：目标语言常用快速下拉——12 项。
+ * 选项标签用语言代码本身：不新撰文案（红线：批次五唯一新撰中文文案为 notice.lang.switched），
+ * 且保证 en locale 下 renderGeneral 渲染产物零 CJK（tests/i18n.test.ts 既有断言）。
+ */
+const QUICK_LANGS = [
+  "zh-CN",
+  "zh-Hant",
+  "en",
+  "ja",
+  "ko",
+  "fr",
+  "de",
+  "es",
+  "pt",
+  "ru",
+  "ar",
+  "hi",
+] as const;
 
 /**
  * 费用估算基准（v1.1.7 换价；单一事实来源，各 Tab 共用）：
@@ -27,19 +59,25 @@ const PROVIDERS: Array<{ id: string; label: string }> = [
  * 空闲时段 输入缓存命中 ¥0.02 / 未命中 ¥1 / 输出 ¥4；高峰时段为空闲 2 倍（¥0.04 / ¥2 / ¥8）。
  * 折算：输入 tokens ≈ 字符数 / 4（英文原文）；输出 tokens ≈ 字符数 / 2.5
  * （中文译文 1 token ≈ 1.5 汉字，长度约为原文 60%）。仅为量级参考，不代表账单口径。
+ * 1.4 批次四：原模块级 COST_BASIS 常量改为函数——调用时刻 t() 解析，避免模块加载期冻结 locale。
  */
-const COST_BASIS =
-  "费用基准：DeepSeek flash 新定价（2026-09-10 起）每百万 tokens：空闲 输入 ¥1 / 输出 ¥4，高峰时段翻倍；API 侧缓存命中输入仅 ¥0.02–0.04";
+function costBasis(): string {
+  return t("settings.cost-basis");
+}
 
 /** 按基准价把已发送字符数折算为 tokens 分解 + 人民币费用（高峰价，空闲减半） */
 function estimateCost(chars: number): string {
-  if (chars <= 0) return "≈ 0 tokens，¥0";
+  if (chars <= 0) return t("settings.usage.cost-zero");
   const inTok = Math.ceil(chars / 4);
   const outTok = Math.ceil(chars / 2.5);
   const yuan = inTok * 2e-6 + outTok * 8e-6; // 高峰时段价
-  const tokText = `${(inTok + outTok).toLocaleString()} tokens（入 ${inTok.toLocaleString()} / 出 ${outTok.toLocaleString()}）`;
-  if (yuan < 0.01) return `≈ ${tokText}，费用 < ¥0.01（空闲时段半价）`;
-  return `≈ ${tokText}，高峰 ≈ ¥${yuan.toFixed(2)}（空闲时段半价）`;
+  const tokText = t("settings.usage.cost-tokens", {
+    total: (inTok + outTok).toLocaleString(),
+    in: inTok.toLocaleString(),
+    out: outTok.toLocaleString(),
+  });
+  if (yuan < 0.01) return t("settings.usage.cost-low", { tokens: tokText });
+  return t("settings.usage.cost-high", { tokens: tokText, yuan: yuan.toFixed(2) });
 }
 
 /**
@@ -72,7 +110,7 @@ export class UutSettingTab extends PluginSettingTab {
     for (const tab of TABS) {
       const btn = tabBar.createEl("button", {
         cls: `uut-tab${tab.id === this.activeTab ? " uut-tab-active" : ""}`,
-        text: tab.label,
+        text: t(tab.key),
       });
       btn.addEventListener("click", () => {
         this.activeTab = tab.id;
@@ -93,27 +131,22 @@ export class UutSettingTab extends PluginSettingTab {
   private renderGeneral(el: HTMLElement): void {
     const s = this.plugin.settings;
     new Setting(el)
-      .setName("启用界面翻译")
-      .setDesc(
-        "总开关；未配置可用翻译引擎时拦截器不激活（设计文档 4.4.2）。" +
-          "关闭后零 API 消耗；打开期间按界面渲染量消耗 API（各通道消耗量级见「作用域」分页标注）"
-      )
-      .addToggle((t) =>
-        t.setValue(s.enabled).onChange(async (v) => {
+      .setName(t("settings.general.enable"))
+      .setDesc(t("settings.general.enable.desc"))
+      .addToggle((toggle) =>
+        toggle.setValue(s.enabled).onChange(async (v) => {
           s.enabled = v;
           await this.plugin.saveSettings();
         })
       );
     new Setting(el)
-      .setName("显示模式")
-      .setDesc(
-        "⚠️ 双语对照模式下回写文本更长，LLM 输出 tokens 约为纯译文的 2 倍（输出单价高于输入）；纯译文最省"
-      )
+      .setName(t("settings.general.display-mode"))
+      .setDesc(t("settings.general.display-mode.desc"))
       .addDropdown((d) =>
         d
-          .addOption("replace", "纯译文")
-          .addOption("bilingual", "双语对照")
-          .addOption("original", "原文（暂停回写）")
+          .addOption("replace", t("settings.general.display-mode.replace"))
+          .addOption("bilingual", t("settings.general.display-mode.bilingual"))
+          .addOption("original", t("settings.general.display-mode.original"))
           .setValue(s.displayMode)
           .onChange(async (v) => {
             s.displayMode = v as typeof s.displayMode;
@@ -121,34 +154,77 @@ export class UutSettingTab extends PluginSettingTab {
           })
       );
     new Setting(el)
-      .setName("双语格式")
-      .setDesc("仅双语对照模式生效；对 API 消耗无影响（仅改变回写排版）")
+      .setName(t("settings.general.bilingual-format"))
+      .setDesc(t("settings.general.bilingual-format.desc"))
       .addDropdown((d) =>
         d
-          .addOption("{t} ({o})", "译文 (原文)")
-          .addOption("{o} | {t}", "原文 | 译文")
+          .addOption("{t} ({o})", t("settings.general.bilingual-format.t-first"))
+          .addOption("{o} | {t}", t("settings.general.bilingual-format.o-first"))
           .setValue(s.bilingualFormat)
           .onChange(async (v) => {
             s.bilingualFormat = v as typeof s.bilingualFormat;
             await this.plugin.saveSettings();
           })
       );
+    // 1.4 批次五（设计五节）：常用语言快速下拉置于自由文本框上方（独立 Setting，无标题行）。
+    // 选中即写入 s.targetLang 并保存，保存成功后 Notice 提示（缓存按语言隔离、切回零成本）；
+    // 文本框保留自由输入、恢复既有静默保存（逐键 onChange 不弹 Notice——主脑纠正卡 UX 裁定）。
+    // setValue() 不触发 onChange（仅用户事件触发），互相同步安全。
+    let quickLangComp: DropdownComponent | null = null;
+    let targetLangComp: TextComponent | null = null;
+    const quickLangSetting = new Setting(el);
+    quickLangSetting.addDropdown((d) => {
+      quickLangComp = d;
+      d.addOption("", ""); // 当前值不在常用清单时的空位（显示为空，不误导）
+      for (const lang of QUICK_LANGS) d.addOption(lang, lang);
+      d.setValue(
+        QUICK_LANGS.includes(s.targetLang as (typeof QUICK_LANGS)[number]) ? s.targetLang : ""
+      );
+      d.onChange(async (v) => {
+        if (!v || v === s.targetLang) return;
+        s.targetLang = v;
+        targetLangComp?.setValue(v);
+        await this.plugin.saveSettings();
+        new Notice(t("notice.lang.switched"));
+      });
+    });
+    const targetLangSetting = new Setting(el)
+      .setName(t("settings.general.target-lang"))
+      .setDesc(t("settings.general.target-lang.desc"));
+    targetLangSetting.addText((text) => {
+      targetLangComp = text;
+      text.setValue(s.targetLang).setPlaceholder("zh-CN").onChange(async (v) => {
+        s.targetLang = v.trim() || "zh-CN";
+        quickLangComp?.setValue(
+          QUICK_LANGS.includes(s.targetLang as (typeof QUICK_LANGS)[number]) ? s.targetLang : ""
+        );
+        await this.plugin.saveSettings();
+      });
+    });
+    // 1.4：插件界面语言（auto/zh-CN/en）——onChange 走 saveSettings，refreshRuntime 内
+    // setUiLocale 热生效。命令名注册期求值、重启生效（设计 4.3 已知边界）；
+    // 本设置项文案已随批次四入键表（settings.general.ui-lang.*）
     new Setting(el)
-      .setName("目标语言")
-      .setDesc("如 zh-CN / zh-Hant / ja 等（缓存键含语言维度，切换互不影响）")
-      .addText((text) =>
-        text.setValue(s.targetLang).setPlaceholder("zh-CN").onChange(async (v) => {
-          s.targetLang = v.trim() || "zh-CN";
-          await this.plugin.saveSettings();
-        })
+      .setName(t("settings.general.ui-lang"))
+      .setDesc(t("settings.general.ui-lang.desc"))
+      .addDropdown((d) =>
+        d
+          .addOption("auto", t("settings.general.ui-lang.auto"))
+          .addOption("zh-CN", t("settings.general.ui-lang.zh"))
+          .addOption("en", t("settings.general.ui-lang.en"))
+          .setValue(s.uiLanguage)
+          .onChange(async (v) => {
+            s.uiLanguage = v as typeof s.uiLanguage;
+            await this.plugin.saveSettings();
+          })
       );
   }
 
   /** API 配置：引擎选择与参数、Key、连通性测试、用量与预算（4.5） */
   private async renderApi(el: HTMLElement): Promise<void> {
     const s = this.plugin.settings;
-    new Setting(el).setName("翻译引擎").addDropdown((d) => {
-      for (const p of PROVIDERS) d.addOption(p.id, p.label);
+    new Setting(el).setName(t("settings.api.engine")).addDropdown((d) => {
+      for (const p of PROVIDERS) d.addOption(p.id, t(p.key));
       d.setValue(s.activeProvider).onChange(async (v) => {
         s.activeProvider = v;
         await this.plugin.saveSettings();
@@ -164,14 +240,22 @@ export class UutSettingTab extends PluginSettingTab {
       .setName("API Key")
       .setDesc(
         (this.plugin.isKeyEncryptionAvailable()
-          ? "safeStorage 加密存储于 secrets.bin，不写入 data.json（4.4.1）"
-          : "当前系统不支持系统级加密，Key 仅以混淆方式存储于 secrets.bin，请勿同步该文件（4.4.1 降级分支）") +
-          `｜Key 状态：${keySaved ? "已保存" : "未保存"}`
+          ? t("settings.api.key.desc.encrypted")
+          : t("settings.api.key.desc.plain")) +
+          t("settings.api.key.status", {
+            s: keySaved
+              ? t("settings.api.key.status.saved")
+              : t("settings.api.key.status.unsaved"),
+          })
       )
       .addText((text) => {
         text.inputEl.type = "password";
         text
-          .setPlaceholder(keySaved ? "已保存，输入新 Key 可覆盖" : "输入后自动加密保存")
+          .setPlaceholder(
+            keySaved
+              ? t("settings.api.key.placeholder.saved")
+              : t("settings.api.key.placeholder.empty")
+          )
           .onChange(async (v) => {
             await this.plugin.saveApiKey(s.activeProvider, v.trim());
             await this.renderTabs();
@@ -179,17 +263,17 @@ export class UutSettingTab extends PluginSettingTab {
       });
 
     if (s.activeProvider === "openai") {
-      this.addTextSetting(el, "Base URL", "可指向本地模型，如 http://localhost:11434/v1",
+      this.addTextSetting(el, "Base URL", t("settings.api.base-url.desc"),
         cfg.apiBaseUrl ?? "", "https://api.openai.com/v1",
         async (v) => { cfg.apiBaseUrl = v; });
-      this.addTextSetting(el, "模型", "默认 gpt-4o-mini（低成本档）",
+      this.addTextSetting(el, t("settings.api.model"), t("settings.api.model.desc"),
         cfg.model ?? "", "gpt-4o-mini",
         async (v) => { cfg.model = v; });
       new Setting(el)
-        .setName("关闭思考模式")
-        .setDesc("DeepSeek V4 等默认开启“思考”的模型建议打开：UI 短文本无需推理，关掉后更快、更省 tokens")
-        .addToggle((t) =>
-          t.setValue(cfg.disableThinking ?? false).onChange(async (v) => {
+        .setName(t("settings.api.disable-thinking"))
+        .setDesc(t("settings.api.disable-thinking.desc"))
+        .addToggle((toggle) =>
+          toggle.setValue(cfg.disableThinking ?? false).onChange(async (v) => {
             cfg.disableThinking = v;
             await this.plugin.saveSettings();
           })
@@ -202,11 +286,8 @@ export class UutSettingTab extends PluginSettingTab {
           : "";
       let priceEnabled = priceText !== "";
       new Setting(el)
-        .setName("token 单价（每百万）")
-        .setDesc(
-          "格式 输入价/输出价，如 2/8（按你所用模型后台标价填）。填好后状态栏与用量页按 实测 token × 单价 展示费用估算；" +
-            "留空关闭。仅影响展示，不影响预算熔断"
-        )
+        .setName(t("settings.api.price"))
+        .setDesc(t("settings.api.price.desc"))
         .addText((text) => {
           text.setPlaceholder("2/8").setValue(priceText).onChange(async (v) => {
             const s = this.plugin.settings;
@@ -220,7 +301,7 @@ export class UutSettingTab extends PluginSettingTab {
               await this.plugin.saveSettings();
               if (!priceEnabled) {
                 priceEnabled = true;
-                new Notice("UUT：费用估算已启用（状态栏与用量页可见）");
+                new Notice(t("settings.api.price.notice-enabled"));
               }
             } else if (v.trim() === "") {
               delete c.pricePerMillion;
@@ -241,33 +322,33 @@ export class UutSettingTab extends PluginSettingTab {
           });
         });
     } else if (s.activeProvider === "azure") {
-      this.addTextSetting(el, "Region", "如 eastasia", cfg.region ?? "", "eastasia",
+      this.addTextSetting(el, "Region", t("settings.api.region.desc"), cfg.region ?? "", "eastasia",
         async (v) => { cfg.region = v; });
     } else if (s.activeProvider === "custom") {
-      this.addTextSetting(el, "端点 URL", "如 http://localhost:11434/v1/chat/completions",
+      this.addTextSetting(el, t("settings.api.custom.endpoint"), t("settings.api.custom.endpoint.desc"),
         cfg.apiBaseUrl ?? "", "http://localhost:11434/v1/chat/completions",
         async (v) => { cfg.apiBaseUrl = v; });
-      this.addTextSetting(el, "模型名", "", cfg.model ?? "", "",
+      this.addTextSetting(el, t("settings.api.custom.model"), "", cfg.model ?? "", "",
         async (v) => { cfg.model = v; });
       new Setting(el)
-        .setName("请求体模板")
-        .setDesc("占位符 {{text}} {{targetLang}} {{model}}；留空使用 OpenAI 兼容模板")
+        .setName(t("settings.api.custom.request-template"))
+        .setDesc(t("settings.api.custom.request-template.desc"))
         .addTextArea((text) =>
           text.setValue(cfg.requestTemplate ?? "").onChange(async (v) => {
             cfg.requestTemplate = v;
             await this.plugin.saveSettings();
           })
         );
-      this.addTextSetting(el, "响应路径", "点分隔路径，如 choices.0.message.content；留空为默认值",
+      this.addTextSetting(el, t("settings.api.custom.response-path"), t("settings.api.custom.response-path.desc"),
         cfg.responsePath ?? "", "",
         async (v) => { cfg.responsePath = v; });
     }
 
     new Setting(el)
-      .setName("连通性测试")
-      .setDesc("向当前引擎发送一次测试请求（消耗极少额度：一条短文本约几十 tokens，按基准价 < ¥0.001）")
+      .setName(t("settings.api.connectivity"))
+      .setDesc(t("settings.api.connectivity.desc"))
       .addButton((b) =>
-        b.setButtonText("测试连接").onClick(async () => {
+        b.setButtonText(t("settings.api.connectivity.button")).onClick(async () => {
           b.setDisabled(true);
           try {
             const res = await this.plugin.testActiveProvider();
@@ -280,21 +361,22 @@ export class UutSettingTab extends PluginSettingTab {
 
     const usage = await this.plugin.monthlyUsage();
     new Setting(el)
-      .setName("用量统计")
+      .setName(t("settings.api.usage"))
       .setDesc(
-        `本月已发送 ${usage} 字符（usage.json 持久化）。${COST_BASIS}；按此折算本月已消耗 ${estimateCost(usage)}（仅量级参考）`
+        t("settings.api.monthly-usage.desc", {
+          usage,
+          basis: costBasis(),
+          cost: estimateCost(usage),
+        })
       );
     new Setting(el)
-      .setName("月度字符预算")
-      .setDesc(
-        "防意外烧额度的硬闸门：超限自动暂停送译、界面回退原文（4.5 熔断）。付费引擎强烈建议设置；留空为不限。" +
-          "参考量级：核心界面一次性约 5–10 万字符；社区市场全量约 30 万字符/轮"
-      )
+      .setName(t("settings.api.budget"))
+      .setDesc(t("settings.api.budget.desc"))
       .addText((text) => {
         text.inputEl.type = "number";
         text
           .setValue(s.monthlyCharBudget === null ? "" : String(s.monthlyCharBudget))
-          .setPlaceholder("不限")
+          .setPlaceholder(t("settings.api.budget.placeholder"))
           .onChange(async (v) => {
             const n = Number(v);
             s.monthlyCharBudget = v.trim() === "" || !Number.isFinite(n) ? null : Math.max(0, Math.floor(n));
@@ -307,71 +389,59 @@ export class UutSettingTab extends PluginSettingTab {
   private renderScope(el: HTMLElement): void {
     const s = this.plugin.settings;
     // 推荐用法总说明：「译」按钮是本插件的核心功能定位——写清两个按钮的精确位置（v1.1.7）
-    el.createDiv({ cls: "uut-scope-note" }).setText(
-      "推荐用法——社区插件市场的「译」按钮有两个：① 左侧列表：每个插件条目的【右上角】，翻译该条目的名称+简介" +
-        "（约 150 字符，费用不足 0.1 分钱）；② 右侧详情：点开任意插件后，详情区【最顶端】的「译」按钮，翻译该插件的 README 全文" +
-        "（数千字符 ≈ 2,600 tokens，高峰价约 1.5 分钱，空闲时段半价）。两者译过即缓存、重复点击零成本。" +
-        "绝大多数要读的英文内容是插件说明与介绍，用「译」按钮即可覆盖，无需打开下面的自动翻译开关。"
-    );
+    el.createDiv({ cls: "uut-scope-note" }).setText(t("settings.scope.note"));
     new Setting(el)
-      .setName("翻译 Obsidian 核心界面")
-      .setDesc(
-        "低风险：核心界面文本量固定（约 5–10 万字符），一次性成本按基准价 ≈ ¥0.30 以内（空闲时段半价），缓存后零成本。" +
-          "生效通道：核心命令（设置面板 / DOM 兜底通道技术上无法区分界面归属核心还是社区插件，不受此开关控制）"
-      )
-      .addToggle((t) =>
-        t.setValue(s.scope.core).onChange(async (v) => {
+      .setName(t("settings.scope.core"))
+      .setDesc(t("settings.scope.core.desc"))
+      .addToggle((toggle) =>
+        toggle.setValue(s.scope.core).onChange(async (v) => {
           s.scope.core = v;
           await this.plugin.saveSettings();
         })
       );
     new Setting(el)
-      .setName("翻译社区插件界面")
-      .setDesc(
-        "⚠️ 高风险（API 消耗）：开启后社区市场浏览器的可见条目会被自动翻译，滚动列表即持续送译；" +
-          "市场数千条目全量约 30 万字符/轮（按基准价高峰 ≈ ¥1.1、空闲 ≈ ¥0.55），页面常驻期间反复触发——v1.1.5 起默认关闭，" +
-          "建议改用条目「译」按钮。生效通道：社区插件命令、市场浏览器自动翻译（设置面板 / DOM 兜底无法归因插件，不受此开关控制）"
-      )
-      .addToggle((t) =>
-        t.setValue(s.scope.communityPlugins).onChange(async (v) => {
+      .setName(t("settings.scope.community"))
+      .setDesc(t("settings.scope.community.desc"))
+      .addToggle((toggle) =>
+        toggle.setValue(s.scope.communityPlugins).onChange(async (v) => {
           s.scope.communityPlugins = v;
           await this.plugin.saveSettings();
         })
       );
 
     new Setting(el)
-      .setName("拦截器独立开关")
-      .setDesc("单通道异常时关闭对应通道（D1 熔断手动入口）。各通道的 API 消耗量级见逐项标注");
+      .setName(t("settings.scope.interceptors"))
+      .setDesc(t("settings.scope.interceptors.desc"));
     // v1.1.5：每个通道标注功能与消耗风险（低风险 = 文本量固定且走缓存；中/高 = 随界面动态渲染持续送译）
-    const interceptors: Array<{ key: keyof typeof s.interceptors; label: string; risk: string }> = [
-      { key: "command", label: "命令面板", risk: "低风险：命令清单固定，启动时预热一次，缓存后零成本" },
-      { key: "menu", label: "菜单", risk: "低风险：菜单项短且重复率高，缓存命中率通常 >90%" },
-      { key: "setting", label: "设置面板", risk: "低风险：各插件设置项文本量固定，翻过一次即缓存" },
+    // 1.4 批次四：label/risk 键化，渲染时 t() 解析
+    const interceptors: Array<{ key: keyof typeof s.interceptors; labelKey: string; riskKey: string }> = [
+      { key: "command", labelKey: "settings.scope.ic.command", riskKey: "settings.scope.ic.command.risk" },
+      { key: "menu", labelKey: "settings.scope.ic.menu", riskKey: "settings.scope.ic.menu.risk" },
+      { key: "setting", labelKey: "settings.scope.ic.setting", riskKey: "settings.scope.ic.setting.risk" },
       {
         key: "dom",
-        label: "DOM 兜底",
-        risk: "⚠️ 中风险：全局 MutationObserver 观察，动态界面（状态栏、弹窗、自定义视图）会持续送译；关闭后 Notice/弹窗等不再翻译",
+        labelKey: "settings.scope.ic.dom",
+        riskKey: "settings.scope.ic.dom.risk",
       },
       {
         key: "marketplace",
-        label: "社区市场「译」按钮",
-        risk: "✅ 推荐：零自动消耗——按钮位置：列表条目【右上角】+ 点开插件后详情区【最顶端】；点击才翻译，缓存命中后重复点击零成本；" +
-          "失败时按钮变红 × 并弹出具体原因（预算超限 / 熔断中 / 网络错误），v1.1.8 起不再静默",
+        labelKey: "settings.scope.ic.market",
+        riskKey: "settings.scope.ic.market.risk",
       },
     ];
     for (const item of interceptors) {
-      new Setting(el).setName(item.label).setDesc(item.risk).addToggle((t) =>
+      new Setting(el).setName(t(item.labelKey)).setDesc(t(item.riskKey)).addToggle((toggle) =>
         // marketplace 为 v1.1.0 新增键：旧 data.json 无此字段，?? true 兜底默认开
-        t.setValue(s.interceptors[item.key] ?? true).onChange(async (v) => {
+        toggle.setValue(s.interceptors[item.key] ?? true).onChange(async (v) => {
           s.interceptors[item.key] = v;
           await this.plugin.saveSettings();
         })
       );
     }
 
-    this.addIdListSetting(el, "插件白名单", "非空时仅翻译这些插件（每行一个插件 id）。⚠️ 当前版本为预留配置，运行时尚未生效",
+    this.addIdListSetting(el, t("settings.scope.whitelist"), t("settings.scope.whitelist.desc"),
       s.scope.pluginWhitelist);
-    this.addIdListSetting(el, "插件黑名单", "这些插件的命令不翻译（默认含本插件自身）。⚠️ 当前版本仅命令通道生效；设置面板 / DOM 兜底无法归因插件归属",
+    this.addIdListSetting(el, t("settings.scope.blacklist"), t("settings.scope.blacklist.desc"),
       s.scope.pluginBlacklist);
 
     const manifests = (
@@ -379,7 +449,7 @@ export class UutSettingTab extends PluginSettingTab {
     ).plugins?.manifests;
     if (manifests) {
       const ids = Object.keys(manifests).sort().join("、");
-      new Setting(el).setName("已安装插件 id 参考").setDesc(ids);
+      new Setting(el).setName(t("settings.scope.installed-ids")).setDesc(ids);
     }
   }
 
@@ -387,24 +457,17 @@ export class UutSettingTab extends PluginSettingTab {
   private async renderCache(el: HTMLElement): Promise<void> {
     const s = this.plugin.settings;
     new Setting(el)
-      .setName("启用本地缓存")
-      .setDesc(
-        "是什么：译文持久化到插件目录 translation-cache.json——同一文本只付一次 API 费用，重启 Obsidian 后仍然有效。" +
-          "什么时候关：只有排查翻译异常时才需要关。⚠️ 关闭后每次渲染界面都重新调 API，同一界面会反复消耗额度"
-      )
-      .addToggle((t) =>
-        t.setValue(s.cacheEnabled).onChange(async (v) => {
+      .setName(t("settings.cache.enable"))
+      .setDesc(t("settings.cache.enable.desc"))
+      .addToggle((toggle) =>
+        toggle.setValue(s.cacheEnabled).onChange(async (v) => {
           s.cacheEnabled = v;
           await this.plugin.saveSettings();
         })
       );
     new Setting(el)
-      .setName("缓存条目上限")
-      .setDesc(
-        "是什么：内存与磁盘共用此上限（默认 50000，范围 1000–200000；磁盘另有 64MB 字节硬顶，先到先截），超出后淘汰最久未用的条目。" +
-          "什么时候调：社区市场 README 全文翻译条目量大，上限太低会提前淘汰译文、下次打开重复消耗 API——译文是纯文本不占空间，建议往宽了设。" +
-          "代价：容量越大，启动时加载缓存越久（毫秒级）、占内存越多。修改即时生效；调小会立即淘汰最旧条目"
-      )
+      .setName(t("settings.cache.max-entries"))
+      .setDesc(t("settings.cache.max-entries.desc"))
       .addText((text) => {
         text.inputEl.type = "number";
         text.setValue(String(s.cacheMaxEntries)).onChange(async (v) => {
@@ -418,51 +481,47 @@ export class UutSettingTab extends PluginSettingTab {
     const stats = this.plugin.cache.stats();
     const bytes = await this.plugin.cacheFileBytes();
     const sizeInfo =
-      bytes === null ? "磁盘文件尚未创建" : `磁盘文件约 ${(bytes / 1024 / 1024).toFixed(2)} MB`;
+      bytes === null
+        ? t("settings.cache.disk-absent")
+        : t("settings.cache.disk-size", { mb: (bytes / 1024 / 1024).toFixed(2) });
     const flushInfo = stats.lastFlushAt
-      ? `最后落盘 ${new Date(stats.lastFlushAt).toLocaleTimeString()}`
-      : "本会话尚未落盘（每 30s 检查，累计 100 条或 5 分钟自动落盘；也可点下方「立即落盘」）";
+      ? t("settings.cache.last-flush", { time: new Date(stats.lastFlushAt).toLocaleTimeString() })
+      : t("settings.cache.flush-pending");
     new Setting(el)
-      .setName("缓存统计")
+      .setName(t("settings.cache.stats"))
       .setDesc(
-        `条目 ${stats.size}（内存=磁盘同上限）｜命中率 ${(stats.hitRate * 100).toFixed(1)}%（本会话统计——命中率越高，越多内容走了本地缓存、越省钱）｜${sizeInfo}｜${flushInfo}`
+        t("settings.cache.stats.desc", {
+          n: stats.size,
+          rate: (stats.hitRate * 100).toFixed(1),
+          size: sizeInfo,
+          flush: flushInfo,
+        })
       );
     new Setting(el)
-      .setName("立即落盘")
-      .setDesc(
-        "是什么：新译的译文先存在内存里，插件每 30 秒检查一次——累计满 100 条新译文、或距上次落盘满 5 分钟，才写入磁盘文件；插件正常卸载/关库时也会强制写入。" +
-          "什么时候点：刚翻完一大批市场 README、或准备关机/重启 Obsidian 前点一下，立刻把内存里的新译文写入磁盘。" +
-          "不点会怎样：崩溃/强杀会丢掉「上次落盘以来」的新译文（最多 5 分钟的量），正常退出不受影响。零 API 消耗"
-      )
+      .setName(t("settings.cache.flush-now"))
+      .setDesc(t("settings.cache.flush-now.desc"))
       .addButton((b) =>
-        b.setButtonText("立即落盘").onClick(async () => {
+        b.setButtonText(t("settings.cache.flush-now")).onClick(async () => {
           const res = await this.plugin.flushCacheNow();
           new Notice(`UUT：${res.message}`);
           await this.renderTabs();
         })
       );
     new Setting(el)
-      .setName("清理失效条目")
-      .setDesc(
-        "是什么：删除与当前「引擎 + 目标语言 + 模型」不匹配的缓存条目——缓存键包含这三个维度，换过模型或引擎后，旧条目永远不会再命中，纯占空间。" +
-          "什么时候点：换过模型/引擎/目标语言之后点一次。注意：v1.1.9 之前写入的旧条目没有模型标记，只能按引擎+语言判定。零 API 消耗"
-      )
+      .setName(t("settings.cache.purge-stale"))
+      .setDesc(t("settings.cache.purge-stale.desc"))
       .addButton((b) =>
-        b.setButtonText("清理失效条目").onClick(async () => {
+        b.setButtonText(t("settings.cache.purge-stale")).onClick(async () => {
           const res = await this.plugin.purgeStaleCacheEntries();
           new Notice(`UUT：${res.message}`);
           await this.renderTabs();
         })
       );
     new Setting(el)
-      .setName("清空缓存")
-      .setDesc(
-        "是什么：删除全部缓存译文（内存+磁盘），同时重置界面已显示的译文（R-07 联动）。" +
-          "什么时候用：译文出现异常（如嵌套乱码）、或换了术语表想全部重译时。" +
-          "⚠️ 代价：清空后所有界面将在下次打开时重新消耗 API 翻译一遍（按基准价：核心界面 ≈ ¥0.30 以内，空闲时段半价）"
-      )
+      .setName(t("settings.cache.clear"))
+      .setDesc(t("settings.cache.clear.desc"))
       .addButton((b) => {
-        b.setButtonText("清空缓存");
+        b.setButtonText(t("settings.cache.clear"));
         // 1.13 起 setWarning 弃用 → setDestructive；低版本运行时特征检测回退
         const btn = b as unknown as {
           setDestructive?: () => unknown;
@@ -474,18 +533,15 @@ export class UutSettingTab extends PluginSettingTab {
           this.plugin.cache.clear();
           this.plugin.resetCommandTranslations();
           await this.plugin.cache.flush();
-          new Notice("UUT：缓存已清空，界面译文将在下次访问时重新翻译");
+          new Notice(t("settings.cache.clear.notice"));
           await this.renderTabs();
         });
       });
     new Setting(el)
-      .setName("导出缓存")
-      .setDesc(
-        "是什么：把缓存完整导出到库根目录 universal-ui-translator-cache-export.json。" +
-          "什么时候用：换电脑迁移，或把自己积累的译文分享给他人——对方导入后零 API 消耗直接复用（FR-12）。零 API 消耗"
-      )
+      .setName(t("settings.cache.export"))
+      .setDesc(t("settings.cache.export.desc"))
       .addButton((b) =>
-        b.setButtonText("导出").onClick(async () => {
+        b.setButtonText(t("settings.cache.export.button")).onClick(async () => {
           const res = await this.plugin.exportCache();
           new Notice(`UUT：${res.message}`);
         })
@@ -494,16 +550,13 @@ export class UutSettingTab extends PluginSettingTab {
       attr: { type: "file", accept: ".json,application/json" },
     });
     new Setting(el)
-      .setName("导入缓存")
-      .setDesc(
-        "是什么：从缓存 JSON 文件合并条目进本地缓存（校验 schemaVersion 与条目结构，非法文件拒绝）。" +
-          "什么时候用：换机迁移回来，或接收他人分享的译文词表。零 API 消耗"
-      )
+      .setName(t("settings.cache.import"))
+      .setDesc(t("settings.cache.import.desc"))
       .addButton((b) =>
-        b.setButtonText("导入").onClick(async () => {
+        b.setButtonText(t("settings.cache.import.button")).onClick(async () => {
           const file = fileInput.files?.[0];
           if (!file) {
-            new Notice("UUT：请先选择缓存 JSON 文件");
+            new Notice(t("settings.cache.import.no-file"));
             return;
           }
           const res = await this.plugin.importCache(await file.text());
@@ -535,20 +588,24 @@ export class UutSettingTab extends PluginSettingTab {
     const cost = this.estimateCostSplit(month.inChars, month.outChars);
 
     // v1.3 口径标注：让"实测"与"折算估算"的边界一目了然
-    new Setting(el).setName("计费口径").setDesc(
+    new Setting(el).setName(t("settings.usage.basis")).setDesc(
       isTokenBasis
-        ? "当前引擎（OpenAI 兼容接口）按 token 计费：v1.3 起直接采集 API 返回的 usage 字段（账单口径，含每请求 system prompt 开销）；" +
-            "状态栏常驻「速率 · 今日 · 费用」段（高级页可关）。切换其他引擎后本页回落字符口径"
-        : "当前引擎按字符计费（DeepL/Google/Azure）：tokens 项为字符折算估算（输入 ≈ 字符/4、输出 ≈ 字符/2.5），仅量级参考"
+        ? t("settings.usage.basis.token.desc")
+        : t("settings.usage.basis.chars.desc")
     );
 
     new Setting(el)
-      .setName("本月用量")
+      .setName(t("settings.usage.month"))
       .setDesc(
-        `送译 ${month.calls.toLocaleString()} 条｜输入 ${month.inChars.toLocaleString()} 字符 ≈ ${inTok.toLocaleString()} tokens｜` +
-          `输出 ${month.outChars.toLocaleString()} 字符 ≈ ${outTok.toLocaleString()} tokens｜估算费用 ${cost}。` +
-          `本月累计发送 ${monthChars.toLocaleString()} 字符（与月度预算同口径，usage.json 持久化）。` +
-          "逐日明细自 v1.1.9 起记录，此前历史只有月累计"
+        t("settings.usage.month.desc", {
+          calls: month.calls.toLocaleString(),
+          inChars: month.inChars.toLocaleString(),
+          inTok: inTok.toLocaleString(),
+          outChars: month.outChars.toLocaleString(),
+          outTok: outTok.toLocaleString(),
+          cost,
+          total: monthChars.toLocaleString(),
+        })
       );
 
     const cards = el.createDiv("uut-usage-cards");
@@ -558,14 +615,30 @@ export class UutSettingTab extends PluginSettingTab {
       c.createDiv("uut-usage-card-value").setText(value);
     };
     // v1.3 会话卡片（自插件加载起的实时数据，含速率与峰值）
-    addCard("本会话 tokens（实测）", session.tokens.toLocaleString());
-    addCard("本会话送译", `${session.calls.toLocaleString()} 条 / ${fmtCompact(session.chars)} 字`);
-    addCard("近 1 分钟", isTokenBasis ? `${fmtCompact(rate1.tokensPerMin)} tok/min` : `${fmtCompact(rate1.charsPerMin)} 字/min`);
-    addCard("近 5 分钟", isTokenBasis ? `${fmtCompact(rate5.tokensPerMin)} tok/min` : `${fmtCompact(rate5.charsPerMin)} 字/min`);
-    addCard("会话峰值", `${fmtCompact(session.peakTokensPerMin)} tok/min`);
+    addCard(t("settings.usage.card.session-tokens"), session.tokens.toLocaleString());
+    addCard(
+      t("settings.usage.card.session-calls"),
+      t("settings.usage.card.session-calls.value", {
+        n: session.calls.toLocaleString(),
+        chars: fmtCompact(session.chars),
+      })
+    );
+    addCard(
+      t("settings.usage.card.rate1"),
+      isTokenBasis
+        ? `${fmtCompact(rate1.tokensPerMin)} tok/min`
+        : t("settings.usage.card.rate-chars.value", { n: fmtCompact(rate1.charsPerMin) })
+    );
+    addCard(
+      t("settings.usage.card.rate5"),
+      isTokenBasis
+        ? `${fmtCompact(rate5.tokensPerMin)} tok/min`
+        : t("settings.usage.card.rate-chars.value", { n: fmtCompact(rate5.charsPerMin) })
+    );
+    addCard(t("settings.usage.card.peak"), `${fmtCompact(session.peakTokensPerMin)} tok/min`);
     // v1.3 今日实测卡片 + 用户单价成本
     if (isTokenBasis) {
-      addCard("今日 tokens（实测）", (today.inTokens + today.outTokens).toLocaleString());
+      addCard(t("settings.usage.card.today-tokens"), (today.inTokens + today.outTokens).toLocaleString());
       if (priceOn && price) {
         const todayCost = estimateTokenCost(today.inTokens, today.outTokens, {
           inputPerMillion: price.input,
@@ -575,15 +648,15 @@ export class UutSettingTab extends PluginSettingTab {
           inputPerMillion: price.input,
           outputPerMillion: price.output,
         });
-        addCard(`今日费用（≈${currency}）`, fmtCost(todayCost, currency));
-        addCard(`本月费用（≈${currency}）`, fmtCost(monthCost, currency));
+        addCard(t("settings.usage.card.today-cost", { currency }), fmtCost(todayCost, currency));
+        addCard(t("settings.usage.card.month-cost", { currency }), fmtCost(monthCost, currency));
       }
     }
     // v1.1.9 既有估算卡片保留（非 openai 引擎与历史数据的唯一口径）
-    addCard("本月送译条数", month.calls.toLocaleString());
-    addCard("输入 tokens（估算）", inTok.toLocaleString());
-    addCard("输出 tokens（估算）", outTok.toLocaleString());
-    addCard("估算费用", cost);
+    addCard(t("settings.usage.card.month-calls"), month.calls.toLocaleString());
+    addCard(t("settings.usage.card.in-tokens"), inTok.toLocaleString());
+    addCard(t("settings.usage.card.out-tokens"), outTok.toLocaleString());
+    addCard(t("settings.usage.card.cost"), cost);
 
     // 近 30 天柱状图（v1.3 口径切换：token 实测 ⇄ 字符折算）：输出（上）+ 输入（下）堆叠，窗口内最大值归一
     const tokenBasis = this.usageChartBasis === "token";
@@ -591,15 +664,21 @@ export class UutSettingTab extends PluginSettingTab {
     const barOut = (d: (typeof daily)[number]) => (tokenBasis ? d.outTokens ?? 0 : Math.ceil(d.outChars / 2.5));
     const maxTok = Math.max(1, ...daily.map((d) => barIn(d) + barOut(d)));
     new Setting(el)
-      .setName(`近 30 天逐日用量（${tokenBasis ? "tokens 实测" : "tokens 折算估算"}）`)
+      .setName(
+        t("settings.usage.chart.title", {
+          basis: tokenBasis
+            ? t("settings.usage.chart.basis-token")
+            : t("settings.usage.chart.basis-est"),
+        })
+      )
       .setHeading();
     const toggle = el.createDiv("uut-tabbar");
-    for (const [id, label] of [
-      ["token", "tokens 实测"],
-      ["chars", "字符折算"],
+    for (const [id, key] of [
+      ["token", "settings.usage.chart.basis-token"],
+      ["chars", "settings.usage.chart.toggle-chars"],
     ] as const) {
       const btn = toggle.createDiv(`uut-tab${this.usageChartBasis === id ? " uut-tab-active" : ""}`);
-      btn.textContent = label;
+      btn.textContent = t(key);
       btn.addEventListener("click", () => {
         this.usageChartBasis = id;
         void this.renderTabs();
@@ -610,10 +689,14 @@ export class UutSettingTab extends PluginSettingTab {
       const iV = barIn(d);
       const oV = barOut(d);
       const bar = chart.createDiv("uut-chart-bar");
-      bar.title =
-        `${d.date}：调用 ${d.calls} 条\n` +
-        `输入 ${d.inChars.toLocaleString()} 字符 / 实测 ${ (d.inTokens ?? 0).toLocaleString()} tokens\n` +
-        `输出 ${d.outChars.toLocaleString()} 字符 / 实测 ${(d.outTokens ?? 0).toLocaleString()} tokens`;
+      bar.title = t("settings.usage.chart.bar-title", {
+        date: d.date,
+        calls: d.calls,
+        inChars: d.inChars.toLocaleString(),
+        inTok: (d.inTokens ?? 0).toLocaleString(),
+        outChars: d.outChars.toLocaleString(),
+        outTok: (d.outTokens ?? 0).toLocaleString(),
+      });
       if (oV > 0) bar.createDiv("uut-chart-out").style.height = `${(oV / maxTok) * 100}%`;
       if (iV > 0) bar.createDiv("uut-chart-in").style.height = `${(iV / maxTok) * 100}%`;
     }
@@ -621,13 +704,16 @@ export class UutSettingTab extends PluginSettingTab {
     axis.createSpan().setText(daily[0]?.date ?? "");
     axis.createSpan().setText(daily[Math.floor(daily.length / 2)]?.date ?? "");
     axis.createSpan().setText(daily[daily.length - 1]?.date ?? "");
+    const legendBasis = tokenBasis
+      ? t("settings.usage.legend.actual")
+      : t("settings.usage.legend.est");
     const legend = el.createDiv("uut-chart-legend");
     const lg1 = legend.createSpan();
     lg1.createSpan({ cls: "uut-chart-swatch uut-swatch-in" });
-    lg1.appendText(`输入 tokens（${tokenBasis ? "实测" : "估算"}）`);
+    lg1.appendText(t("settings.usage.legend.in", { basis: legendBasis }));
     const lg2 = legend.createSpan();
     lg2.createSpan({ cls: "uut-chart-swatch uut-swatch-out" });
-    lg2.appendText(`输出 tokens（${tokenBasis ? "实测" : "估算"}）`);
+    lg2.appendText(t("settings.usage.legend.out", { basis: legendBasis }));
 
     const week = daily.slice(-7).reduce(
       (acc, d) => ({
@@ -640,22 +726,19 @@ export class UutSettingTab extends PluginSettingTab {
       { calls: 0, inChars: 0, outChars: 0, inTokens: 0, outTokens: 0 }
     );
     new Setting(el)
-      .setName("今日 / 近 7 日")
+      .setName(t("settings.usage.today-week"))
       .setDesc(
-        `今日：${daily[daily.length - 1]?.calls ?? 0} 条，实测 ${(
-          today.inTokens + today.outTokens
-        ).toLocaleString()} tokens｜近 7 日：${week.calls.toLocaleString()} 条，实测 ${(
-          (week.inTokens ?? 0) + (week.outTokens ?? 0)
-        ).toLocaleString()} tokens（折算估算 ${(Math.ceil(week.inChars / 4) + Math.ceil(week.outChars / 2.5)).toLocaleString()}）`
+        t("settings.usage.today-week.desc", {
+          todayCalls: daily[daily.length - 1]?.calls ?? 0,
+          todayTok: (today.inTokens + today.outTokens).toLocaleString(),
+          weekCalls: week.calls.toLocaleString(),
+          weekTok: ((week.inTokens ?? 0) + (week.outTokens ?? 0)).toLocaleString(),
+          weekEst: (Math.ceil(week.inChars / 4) + Math.ceil(week.outChars / 2.5)).toLocaleString(),
+        })
       );
     new Setting(el)
-      .setName("口径说明")
-      .setDesc(
-        "v1.3 起 OpenAI 兼容通道记录 API 返回的真实 usage（账单口径，含每请求 system prompt 开销）；" +
-          "「折算估算」由字符数估算（输入 ≈ 字符/4、输出 ≈ 字符/2.5），服务于历史数据与非 token 计费引擎。" +
-          COST_BASIS +
-          "。缓存命中与术语表命中不消耗 API、不计入此统计；月度预算口径仍为字符"
-      );
+      .setName(t("settings.usage.basis-note"))
+      .setDesc(t("settings.usage.basis-note.desc", { basis: costBasis() }));
   }
 
   /** 按基准价把输入/输出字符拆分折算为费用（比单字符口径更准；高峰价，空闲减半） */
@@ -664,16 +747,16 @@ export class UutSettingTab extends PluginSettingTab {
     const inTok = Math.ceil(inChars / 4);
     const outTok = Math.ceil(outChars / 2.5);
     const yuan = inTok * 2e-6 + outTok * 8e-6; // 高峰时段价
-    if (yuan < 0.01) return "< ¥0.01（空闲半价）";
-    return `高峰 ≈ ¥${yuan.toFixed(2)}（空闲 ≈ ¥${(yuan / 2).toFixed(2)}）`;
+    if (yuan < 0.01) return t("settings.usage.split-low");
+    return t("settings.usage.split-high", { peak: yuan.toFixed(2), off: (yuan / 2).toFixed(2) });
   }
 
   /** 高级：过滤正则、术语表、批量参数、调试模式（4.5） */
   private renderAdvanced(el: HTMLElement): void {
     const s = this.plugin.settings;
     new Setting(el)
-      .setName("跳过规则（正则）")
-      .setDesc("每行一条正则；命中文本不送译（4.2.1 规则 1）。减少不必要的 API 消耗；零自身成本")
+      .setName(t("settings.advanced.skip-patterns"))
+      .setDesc(t("settings.advanced.skip-patterns.desc"))
       .addTextArea((text) =>
         text.setValue(s.skipPatterns.join("\n")).onChange(async (v) => {
           s.skipPatterns = v.split("\n").map((x) => x.trim()).filter((x) => x.length > 0);
@@ -681,8 +764,8 @@ export class UutSettingTab extends PluginSettingTab {
         })
       );
     new Setting(el)
-      .setName("术语表（固定译法）")
-      .setDesc("每行一条：原文=译文；命中直接返回，不进缓存与 API（FR-15）——省额度：命中词条零消耗")
+      .setName(t("settings.advanced.glossary"))
+      .setDesc(t("settings.advanced.glossary.desc"))
       .addTextArea((text) =>
         text
           .setValue(
@@ -701,8 +784,8 @@ export class UutSettingTab extends PluginSettingTab {
           })
       );
     new Setting(el)
-      .setName("批量聚合窗口（毫秒）")
-      .setDesc("默认 100，可配置 50–500（4.2.2）。窗口内相同文本去重共享一次请求——调大可略微减少重复请求；对总字符消耗无影响")
+      .setName(t("settings.advanced.batch-window"))
+      .setDesc(t("settings.advanced.batch-window.desc"))
       .addText((text) => {
         text.inputEl.type = "number";
         text.setValue(String(s.batchWindowMs)).onChange(async (v) => {
@@ -714,8 +797,8 @@ export class UutSettingTab extends PluginSettingTab {
         });
       });
     new Setting(el)
-      .setName("最大并发请求数")
-      .setDesc("默认 3，避免触发 API 限流（4.2.2）。⚠️ 调大不省钱（总字符量不变），只影响速度；触发限流反而可能因重试多耗额度")
+      .setName(t("settings.advanced.max-concurrent"))
+      .setDesc(t("settings.advanced.max-concurrent.desc"))
       .addText((text) => {
         text.inputEl.type = "number";
         text.setValue(String(s.maxConcurrentRequests)).onChange(async (v) => {
@@ -727,8 +810,8 @@ export class UutSettingTab extends PluginSettingTab {
         });
       });
     new Setting(el)
-      .setName("单请求超时（毫秒）")
-      .setDesc("默认 30000（R-23：慢引擎上调）；可配置 5000–120000（4.2.2）。超时的请求按失败处理：已发送的字符通常仍会计费")
+      .setName(t("settings.advanced.timeout"))
+      .setDesc(t("settings.advanced.timeout.desc"))
       .addText((text) => {
         text.inputEl.type = "number";
         text.setValue(String(s.requestTimeoutMs)).onChange(async (v) => {
@@ -740,10 +823,10 @@ export class UutSettingTab extends PluginSettingTab {
         });
       });
     new Setting(el)
-      .setName("调试模式")
-      .setDesc("Console 输出拦截日志。纯本地行为，零 API 消耗")
-      .addToggle((t) =>
-        t.setValue(s.debugMode).onChange(async (v) => {
+      .setName(t("settings.advanced.debug"))
+      .setDesc(t("settings.advanced.debug.desc"))
+      .addToggle((toggle) =>
+        toggle.setValue(s.debugMode).onChange(async (v) => {
           s.debugMode = v;
           await this.plugin.saveSettings();
         })

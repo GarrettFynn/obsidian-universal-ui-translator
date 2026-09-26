@@ -1,5 +1,6 @@
 import { Notice } from "obsidian";
 import { TranslationCoordinator } from "../core/coordinator";
+import { t } from "../i18n";
 
 type FormatFn = (translated: string, original: string) => string | null;
 
@@ -74,7 +75,7 @@ export class DOMPatcher {
 
   activate(): boolean {
     if (typeof MutationObserver !== "function" || !document.body) {
-      new Notice("UUT：DOM 兜底通道翻译已停用（MutationObserver 不可用）");
+      new Notice(t("dom.patcher.disabled"));
       return false;
     }
     this.rescanDocuments();
@@ -93,7 +94,7 @@ export class DOMPatcher {
       () => this.rescanDocuments(),
       this.rescanIntervalMs
     );
-    this.debug(`DOMPatcher 已激活，观察 ${this.observers.length} 个 document`);
+    this.debug(t("dom.patcher.activated", { n: this.observers.length }));
     return true;
   }
 
@@ -169,7 +170,7 @@ export class DOMPatcher {
       this.collectTextNodes(doc.body);
       this.scheduleIdle();
     }
-    this.debug("DOMPatcher 纳管新 document");
+    this.debug(t("dom.patcher.adopted"));
   }
 
   private onMutations(records: MutationRecord[]): void {

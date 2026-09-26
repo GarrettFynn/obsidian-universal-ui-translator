@@ -1,4 +1,5 @@
 import { HttpClient, TranslationProvider } from "./base-provider";
+import { t } from "../i18n";
 
 export interface DeepLProviderOptions {
   apiKey: string;
@@ -42,7 +43,7 @@ export class DeepLProvider extends TranslationProvider {
   }
 
   async translateBatch(texts: string[]): Promise<string[]> {
-    if (!this.http) throw new Error("HttpClient 未注入");
+    if (!this.http) throw new Error(t("provider.http-not-injected"));
     if (texts.length === 0) return [];
     const res = await this.http({
       url: `${this.baseUrl}/v2/translate`,
@@ -61,18 +62,18 @@ export class DeepLProvider extends TranslationProvider {
     }
     const data = JSON.parse(res.text) as { translations?: Array<{ text?: string }> };
     if (!data.translations || data.translations.length !== texts.length) {
-      throw new Error("DeepL 响应 translations 数量与请求不符");
+      throw new Error(t("provider.deepl.count-mismatch"));
     }
-    return data.translations.map((t, i) => {
-      if (typeof t.text !== "string" || !t.text) {
-        throw new Error(`DeepL 响应第 ${i} 条缺少 text`);
+    return data.translations.map((tr, i) => {
+      if (typeof tr.text !== "string" || !tr.text) {
+        throw new Error(t("provider.deepl.missing-text", { n: i }));
       }
-      return t.text;
+      return tr.text;
     });
   }
 
   async validateConfig(): Promise<{ ok: boolean; message: string }> {
-    if (!this.http) return { ok: false, message: "HttpClient 未注入" };
+    if (!this.http) return { ok: false, message: t("provider.http-not-injected") };
     try {
       const res = await this.http({
         url: `${this.baseUrl}/v2/usage`,
@@ -80,11 +81,11 @@ export class DeepLProvider extends TranslationProvider {
         headers: { Authorization: `DeepL-Auth-Key ${this.options.apiKey}` },
       });
       if (res.status === 200) {
-        return { ok: true, message: "连接成功（DeepL 用量查询正常）" };
+        return { ok: true, message: t("provider.deepl.usage-ok") };
       }
-      return { ok: false, message: `HTTP ${res.status}：请检查 API Key` };
+      return { ok: false, message: t("provider.deepl.http-status", { n: res.status }) };
     } catch (e) {
-      return { ok: false, message: `网络错误：${String(e)}` };
+      return { ok: false, message: t("provider.deepl.network-error", { n: String(e) }) };
     }
   }
 }

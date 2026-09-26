@@ -1,5 +1,6 @@
 import { App, Command, Notice, Plugin } from "obsidian";
 import { TranslationCoordinator } from "../core/coordinator";
+import { t } from "../i18n";
 
 /**
  * CommandPatcher（设计文档 4.1.1，方案经 Spike S1/S2 实测验证）
@@ -27,7 +28,7 @@ export class CommandPatcher {
   activate(): boolean {
     const proto = Plugin.prototype as unknown as Record<string, unknown>;
     if (typeof proto.addCommand !== "function") {
-      new Notice("UUT：命令通道翻译已停用（addCommand 特征检测失败）");
+      new Notice(t("command.patcher.disabled"));
       return false;
     }
     // 路径 1：存量命令——核心命令 + 先于本插件加载的插件命令。
@@ -43,10 +44,10 @@ export class CommandPatcher {
         for (const command of commandsApi.listCommands()) {
           this.patchCommand(command, this.resolvePluginId(command));
         }
-        this.debug(`CommandPatcher 存量 patch ${this.patched.size} 条`);
+        this.debug(t("command.patcher.swept", { n: this.patched.size }));
       } else {
         // S2 已实测可用；若未来 Obsidian 变更此内部 API，存量命令由 DOMPatcher 兜底（D1）
-        this.debug("app.commands.listCommands 不可用，存量命令留待 DOMPatcher 兜底");
+        this.debug(t("command.patcher.list-unavailable"));
       }
     };
     // onLayoutReady 在布局已就绪时立即执行回调，故设置变更触发的运行时重载不受延迟影响
@@ -67,7 +68,7 @@ export class CommandPatcher {
       patchCommand(command, this.manifest?.id ?? "unknown");
       return original.call(this, command);
     };
-    this.debug("CommandPatcher 已激活（addCommand 增量劫持就绪；存量扫描待布局就绪）");
+    this.debug(t("command.patcher.activated"));
     return true;
   }
 
@@ -153,7 +154,7 @@ export class CommandPatcher {
       }
     } catch (e) {
       // 优雅降级：单条命令 patch 失败仅跳过该条
-      this.debug(`patch 命令失败（已跳过）: ${String(e)}`);
+      this.debug(t("command.patcher.patch-failed", { n: String(e) }));
     }
   }
 }

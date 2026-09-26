@@ -1,4 +1,5 @@
 import { TranslationProvider } from "../providers/base-provider";
+import { t } from "../i18n";
 
 export interface BatchTranslatorOptions {
   /** 聚合窗口（4.2.2：100ms，可配置 50–500ms） */
@@ -53,7 +54,7 @@ export class BatchTranslator {
   /** 提交一条文本进入聚合窗口；同窗口内相同文本去重共享结果 */
   submit(text: string, context?: string): Promise<string> {
     if (!this.getProvider()) {
-      return Promise.reject(new Error("Provider 未配置"));
+      return Promise.reject(new Error(t("common.provider-not-configured")));
     }
     return new Promise<string>((resolve, reject) => {
       const entry: PendingEntry = { text, context, resolve, reject };
@@ -98,7 +99,7 @@ export class BatchTranslator {
       this.byText = new Map();
       const provider = this.getProvider();
       if (!provider || entries.length === 0) {
-        for (const e of entries) e.reject(new Error("Provider 未配置"));
+        for (const e of entries) e.reject(new Error(t("common.provider-not-configured")));
         return;
       }
       const batches = this.splitBatches([...groups.keys()], provider);

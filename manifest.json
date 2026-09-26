@@ -1,7 +1,7 @@
 {
   "id": "universal-ui-translator",
   "name": "Universal UI Translator",
-  "version": "1.3.2",
+  "version": "1.4.0",
   "minAppVersion": "1.5.0",
   "description": "Translate core & community plugin UI via your own API — batched for speed, cached to save tokens (survives upgrades), with live token usage & cost tracking.",
   "author": "GarrettFynn",

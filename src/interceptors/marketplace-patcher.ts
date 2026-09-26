@@ -1,6 +1,7 @@
 import { Notice } from "obsidian";
 import { TranslationCoordinator } from "../core/coordinator";
 import type { TranslateOutcome } from "../core/coordinator";
+import { t } from "../i18n";
 
 type FormatFn = (translated: string, original: string) => string | null;
 
@@ -54,7 +55,7 @@ export class MarketplacePatcher {
     this.rescanDocuments();
     // 市场列表异步加载/滚动增量渲染，低频轮询兜底晚到的 document 与条目
     this.rescanInterval = window.setInterval(() => this.rescanDocuments(), 3000);
-    this.debug("MarketplacePatcher 已激活");
+    this.debug(t("market.activated"));
     return true;
   }
 
@@ -138,7 +139,7 @@ export class MarketplacePatcher {
     const obs = new MutationObserver(() => this.injectButtons(doc));
     obs.observe(doc.body, { childList: true, subtree: true });
     this.observers.push(obs);
-    this.debug("MarketplacePatcher 纳管新 document");
+    this.debug(t("market.adopted"));
   }
 
   /** 为未注入的市场条目追加「译」按钮（幂等：已有按钮的条目跳过）；同时处理右侧详情面板 */
@@ -153,9 +154,9 @@ export class MarketplacePatcher {
       if (item.querySelector(":scope > .uut-mkt-btn")) return; // 兜底：按钮之后被追加其他元素
       const btn = doc.createElement("button");
       btn.className = "uut-mkt-btn";
-      btn.textContent = "译";
+      btn.textContent = t("market.button.glyph");
       btn.setAttribute("data-no-translate", "true");
-      btn.setAttribute("title", "翻译此插件条目");
+      btn.setAttribute("title", t("market.button.title-item"));
       btn.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -165,7 +166,7 @@ export class MarketplacePatcher {
       added++;
     });
     if (this.injectDetailButton(doc)) added++;
-    if (added > 0) this.debug(`MarketplacePatcher 注入 ${added} 个按钮`);
+    if (added > 0) this.debug(t("market.injected", { n: added }));
   }
 
   /**
@@ -193,9 +194,9 @@ export class MarketplacePatcher {
     if (detail.querySelector(":scope > .uut-mkt-detail-btn")) return false;
     const btn = doc.createElement("button");
     btn.className = "uut-mkt-detail-btn";
-    btn.textContent = "译";
+    btn.textContent = t("market.button.glyph");
     btn.setAttribute("data-no-translate", "true");
-    btn.setAttribute("title", "翻译此插件的详细介绍（README 全文）；中文界面文本自动跳过、零消耗");
+    btn.setAttribute("title", t("market.button.title-detail"));
     btn.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -249,27 +250,24 @@ export class MarketplacePatcher {
           btn.classList.add("uut-mkt-btn-failed");
           this.notifyThrottled(blocked.key, blocked.message);
           window.setTimeout(() => {
-            btn.textContent = "译";
+            btn.textContent = t("market.button.glyph");
             btn.classList.remove("uut-mkt-btn-failed");
           }, 3000);
         } else if (stats.modeSuppressed > 0) {
           // 「临时显示原文」模式：翻译成功进缓存但按模式不回写——不说清会被当成"按钮失效"
-          btn.textContent = "译";
-          this.notifyThrottled(
-            "display-mode",
-            "UUT：当前处于「临时显示原文」模式——译文已进缓存但不回写界面；执行命令「临时显示原文/恢复译文」恢复"
-          );
+          btn.textContent = t("market.button.glyph");
+          this.notifyThrottled("display-mode", t("market.notify.display-mode"));
         } else if (stats.detached > 0) {
           // 重试一趟仍全部游离：详情区持续重渲染中，译文已缓存——保持可再点的中性态
-          btn.textContent = "译";
+          btn.textContent = t("market.button.glyph");
         } else {
           btn.textContent = "✓"; // 无可译节点（已译过 / 全被过滤）
         }
       }
     } catch (e) {
       // 异常兜底：恢复按钮可点状态（此前会永久卡在「…」）
-      console.warn(`[uut] 市场「译」按钮翻译异常：${String(e).slice(0, 160)}`);
-      btn.textContent = "译";
+      console.warn(t("market.log.translate-error", { n: String(e).slice(0, 160) }));
+      btn.textContent = t("market.button.glyph");
     } finally {
       btn.removeAttribute("disabled");
       btn.classList.remove("uut-mkt-progressing");
@@ -421,7 +419,7 @@ export class MarketplacePatcher {
       total += r.total;
     }
     const el = this.ensureProgressEl(doc);
-    el.label.textContent = `UUT 翻译中 ${settled}/${total}`;
+    el.label.textContent = t("market.progress.label", { n: settled, m: total });
     const step = total === 0 ? 0 : Math.min(10, Math.floor((settled / total) * 10));
     // v1.3 F2：批在途（有未结算节点）时填充条脉动——消除"计数冻结不动"的静止感
     const pulse = settled < total ? " uut-pulse" : "";
@@ -446,7 +444,7 @@ export class MarketplacePatcher {
     this.activeProgress.delete(doc);
     const el = this.progressEls.get(doc);
     if (el?.root.isConnected) {
-      el.label.textContent = done > 0 ? "UUT ✓ 已完成" : "UUT 已结束";
+      el.label.textContent = done > 0 ? t("market.progress.done") : t("market.progress.ended");
       // v1.3 F1：完成态立即淡出（原停留 1.5s 造成"进度条比译文慢一秒"的观感）
       el.root.classList.add("uut-mkt-progress-done");
     }
@@ -495,29 +493,25 @@ export class MarketplacePatcher {
     if (outcomes.length === 0) return null;
     const has = (o: TranslateOutcome) => outcomes.includes(o);
     if (has("budget")) {
-      return {
-        key: "budget",
-        message: "UUT：本月字符预算已用完，翻译已暂停（设置页 → API 配置可调整预算）",
-      };
+      return { key: "budget", message: t("market.notify.budget") };
     }
     if (has("circuit")) {
-      return {
-        key: "circuit",
-        message:
-          "UUT：翻译服务连续失败、熔断保护中（约 10 分钟自动恢复）；到设置页保存一次配置可立即重置",
-      };
+      return { key: "circuit", message: t("market.notify.circuit") };
     }
     if (has("no-provider")) {
-      return { key: "no-provider", message: "UUT：未配置翻译引擎或 API Key，请到设置页完成配置" };
+      return { key: "no-provider", message: t("market.notify.no-provider") };
     }
     if (has("failed")) {
       return {
         key: "failed",
-        message: `UUT：翻译请求失败（${firstError ?? "未知错误"}），已自动跳过；可稍后重试`,
+        // 1.4 批次五补抽：外层模板入键表；内层「未知错误」沿用批次三的 market.error.unknown
+        message: t("market.notify.failed", {
+          reason: firstError ?? t("market.error.unknown"),
+        }),
       };
     }
     if (has("negative-cache")) {
-      return { key: "negative-cache", message: "UUT：该文本刚刚失败过，5 分钟内不再自动重试" };
+      return { key: "negative-cache", message: t("market.notify.negative-cache") };
     }
     return null;
   }

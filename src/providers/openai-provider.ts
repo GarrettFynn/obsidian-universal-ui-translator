@@ -1,12 +1,40 @@
 import { HttpClient, TranslationProvider } from "./base-provider";
+import { scriptFamilyOf } from "../filters/filter-engine";
+import { t } from "../i18n";
 import type { TokenUsage } from "../types";
 
-/** 设计文档 4.3.3 提示词模板（OpenAI / Custom 共用） */
+/**
+ * 1.4 Prompt Profile（设计三节）：规则 1 按语言族的简洁性规则表。
+ * zh/ja/ko/ar 经 scriptFamilyOf（过滤器导出的共享前缀匹配）归一取行；
+ * fr/es/de 等拉丁语系无脚本区间（scriptFamilyOf 返回 null），按语言主码前缀
+ * 匹配本表（设计 3.1"复用前缀匹配思路"）；两者都未命中走 PROMPT_RULE1_DEFAULT。
+ * 拉丁语系的重译防线完全依赖规则 6（已本地化原样返回，通用措辞不动）。
+ */
+const PROMPT_RULE1: Readonly<Record<string, string>> = {
+  zh: "Keep it concise (menu/command labels ≤ 6 Chinese characters when possible)",
+  ja: "Keep it concise (menu/command labels ≤ 6 Japanese characters; prefer standard kanji UI terms)",
+  ko: "Keep it concise (menu/command labels ≤ 8 Korean characters)",
+  fr: "Keep it concise (avoid redundant articles; keep menu/command labels short)",
+  es: "Keep it concise (avoid redundant articles; keep menu/command labels short)",
+  de: "Keep it concise (prefer compact compound nouns; keep labels short)",
+  ar: "Keep it concise and use standard Arabic UI punctuation",
+};
+const PROMPT_RULE1_DEFAULT = "Keep it concise (menu/command labels as short as possible)";
+
+/** 规则 1 措辞解析：语言族表 → 语言主码 → DEFAULT 回退 */
+function resolveRule1(targetLang: string): string {
+  const family = scriptFamilyOf(targetLang);
+  if (family !== null && PROMPT_RULE1[family]) return PROMPT_RULE1[family];
+  const primary = targetLang.trim().toLowerCase().split("-")[0];
+  return PROMPT_RULE1[primary] ?? PROMPT_RULE1_DEFAULT;
+}
+
+/** 设计文档 4.3.3 提示词模板（OpenAI / Custom 共用）；1.4 规则 1 改查 PROMPT_RULE1 族表 */
 export function buildUiTranslationPrompt(targetLang: string): string {
   return [
     `You are a UI localization expert. Translate the following interface text into ${targetLang}.`,
     "Rules:",
-    "1. Keep it concise (menu/command labels ≤ 6 Chinese characters when possible)",
+    `1. ${resolveRule1(targetLang)}`,
     "2. Preserve placeholders exactly: {0}, %s, {{variable}}",
     "3. Preserve keyboard shortcuts exactly: Ctrl+P, Cmd+Shift+S",
     "4. Preserve brand names, plugin names and proper nouns",
@@ -29,13 +57,15 @@ export function parseNumberedResponse(raw: string, n: number): string[] {
   for (const line of raw.split("\n")) {
     if (!line.trim()) continue; // 首尾空白行忽略
     const m = /^(\d+)[.:)]?\s?(.*)$/.exec(line);
-    if (!m) throw new Error(`批量响应行格式不符：${line.slice(0, 40)}`);
+    if (!m) throw new Error(t("provider.openai.batch-line-invalid", { n: line.slice(0, 40) }));
     const idx = Number(m[1]);
-    if (idx < 1 || idx > n || seen.has(idx)) throw new Error("批量响应序号错位");
+    if (idx < 1 || idx > n || seen.has(idx)) throw new Error(t("provider.openai.batch-index-misaligned"));
     seen.add(idx);
     out[idx - 1] = m[2];
   }
-  if (seen.size !== n) throw new Error(`批量响应行数不符（${seen.size}/${n}）`);
+  if (seen.size !== n) {
+    throw new Error(t("provider.openai.batch-count-mismatch", { seen: seen.size, total: n }));
+  }
   return out;
 }
 
@@ -62,7 +92,8 @@ interface ChatCompletionResponse {
 /** OpenAI 兼容 chat/completions 端点（设计文档 4.3.2） */
 export class OpenAIProvider extends TranslationProvider {
   readonly id = "openai";
-  readonly name = "OpenAI 兼容接口";
+  /** 1.4 批次五：name 改 t()（构造期解析，随 refreshRuntime 重建热生效） */
+  readonly name = t("provider.openai.name");
   /** A1 合批：单请求可承载条数（上游 BatchTranslator 每批 ≤50 条，40 留解析余量） */
   readonly maxBatchSize = 40;
 
@@ -91,7 +122,7 @@ export class OpenAIProvider extends TranslationProvider {
   }
 
   async translate(text: string, ctx?: { context?: string }): Promise<string> {
-    if (!this.http) throw new Error("HttpClient 未注入");
+    if (!this.http) throw new Error(t("provider.http-not-injected"));
     const messages = [
       { role: "system", content: buildUiTranslationPrompt(this.options.targetLang) },
       // D7：context 仅作 prompt 参考，不进缓存键
@@ -120,7 +151,7 @@ export class OpenAIProvider extends TranslationProvider {
     this.emitUsage(data);
     const out = data.choices?.[0]?.message?.content;
     if (typeof out !== "string" || !out.trim()) {
-      throw new Error("OpenAI 响应缺少 choices[0].message.content");
+      throw new Error(t("provider.openai.missing-content"));
     }
     return out.trim();
   }
@@ -133,7 +164,7 @@ export class OpenAIProvider extends TranslationProvider {
    * prompt 参考"维度，批内不携带（单条通道不受影响）
    */
   async translateBatch(texts: string[]): Promise<string[]> {
-    if (!this.http) throw new Error("HttpClient 未注入");
+    if (!this.http) throw new Error(t("provider.http-not-injected"));
     if (texts.length === 0) return [];
     // 空槽语义：undefined 位在 runBatch 中触发该条的单条重试（results?.[i] ?? null）
     const out: Array<string | undefined> = new Array<string | undefined>(texts.length);
@@ -166,7 +197,7 @@ export class OpenAIProvider extends TranslationProvider {
 
   /** 编号列表单请求翻译（A1）；解析违例抛错走整批降级 */
   private async translateNumbered(lines: string[]): Promise<string[]> {
-    if (!this.http) throw new Error("HttpClient 未注入");
+    if (!this.http) throw new Error(t("provider.http-not-injected"));
     const system =
       buildUiTranslationPrompt(this.options.targetLang) +
       [
@@ -203,24 +234,33 @@ export class OpenAIProvider extends TranslationProvider {
     this.emitUsage(data);
     const content = data.choices?.[0]?.message?.content;
     if (typeof content !== "string" || !content.trim()) {
-      throw new Error("OpenAI 响应缺少 choices[0].message.content");
+      throw new Error(t("provider.openai.missing-content"));
     }
     return parseNumberedResponse(content.trim(), lines.length);
   }
 
   /** 连通性测试：真实试译一个词（/models 浅探测测不出模型名错误与账户欠费 402，R-33 教训） */
   async validateConfig(): Promise<{ ok: boolean; message: string }> {
-    if (!this.http) return { ok: false, message: "HttpClient 未注入" };
+    if (!this.http) return { ok: false, message: t("provider.http-not-injected") };
     try {
       const out = await this.translate("OK");
-      return { ok: true, message: `连接成功（模型：${this.model}，试译：${out.slice(0, 20)}）` };
+      return {
+        ok: true,
+        message: t("provider.openai.connect-ok", { model: this.model, probe: out.slice(0, 20) }),
+      };
     } catch (e) {
       const msg = String(e);
-      if (/HTTP 40[13]/.test(msg)) return { ok: false, message: "API Key 无效或已失效（401/403）" };
-      if (/HTTP 402/.test(msg)) return { ok: false, message: "账户余额不足（402），请到服务商后台充值或续费" };
-      if (/HTTP 404/.test(msg)) return { ok: false, message: `模型不存在（404）：请检查模型名「${this.model}」` };
-      if (/HTTP 429/.test(msg)) return { ok: false, message: "触发限流（429），请稍后重试" };
-      return { ok: false, message: `连通性测试失败：${msg.slice(0, 150)}` };
+      if (/HTTP 40[13]/.test(msg))
+        return { ok: false, message: t("provider.openai.auth-failed") };
+      if (/HTTP 402/.test(msg))
+        return { ok: false, message: t("provider.openai.insufficient-balance") };
+      if (/HTTP 404/.test(msg))
+        return {
+          ok: false,
+          message: t("provider.openai.model-not-found", { model: this.model }),
+        };
+      if (/HTTP 429/.test(msg)) return { ok: false, message: t("provider.openai.rate-limited") };
+      return { ok: false, message: t("provider.validate-failed", { n: msg.slice(0, 150) }) };
     }
   }
 }
