@@ -208,6 +208,11 @@ export const zhCN: Record<string, string> = {
   "settings.cache.max-entries": "缓存条目上限",
   "settings.cache.max-entries.desc":
     "是什么：内存与磁盘共用此上限（默认 50000，范围 1000–200000；磁盘另有 64MB 字节硬顶，先到先截），超出后淘汰最久未用的条目。什么时候调：社区市场 README 全文翻译条目量大，上限太低会提前淘汰译文、下次打开重复消耗 API——译文是纯文本不占空间，建议往宽了设。代价：容量越大，启动时加载缓存越久（毫秒级）、占内存越多。修改即时生效；调小会立即淘汰最旧条目",
+  "settings.cache.loose-key": "跨模型/引擎复用缓存（宽松缓存键）",
+  "settings.cache.loose-key.desc":
+    "是什么：开启后缓存键退化为「原文+目标语言」，换模型或换引擎后旧译文直接复用，不再全量重译。什么时候开：经常换模型试探（同一界面每换一次模型就重译一遍，是最费的用量放大器）。代价：不同模型的译文风格会混杂在同一缓存里；开启期间「清理失效条目」不可用。关闭后恢复按 引擎+语言+模型 隔离",
+  "status.cache-purge-loose":
+    "宽松缓存键（跨模型/引擎复用）已开启：条目无引擎/模型维度可判定，清理会误删共享译文——已禁用。如需清理请先关闭该开关",
   "settings.cache.disk-absent": "磁盘文件尚未创建",
   "settings.cache.disk-size": "磁盘文件约 {mb} MB",
   "settings.cache.last-flush": "最后落盘 {time}",

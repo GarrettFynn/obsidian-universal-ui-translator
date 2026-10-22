@@ -23,6 +23,7 @@ import {
   CacheEntry,
   DEFAULT_SETTINGS,
   PluginSettings,
+  SyncFileIO,
   TextFileIO,
 } from "./src/types";
 
@@ -47,6 +48,10 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
   private usageBarItem: HTMLElement | null = null;
   private lastUsageBarText = "";
   private io!: TextFileIO;
+  /** 1.5（F1）：卸载同步落盘 IO（Node fs；isDesktopOnly=true 保证可用） */
+  private syncIO!: SyncFileIO;
+  /** 1.5（F2）：上一回调的队列深度（>0→0 边沿检测；字段而非局部——refreshRuntime 重建 batcher 后状态延续） */
+  private prevQueuePending = 0;
   private http!: HttpClient;
   /** A2：全局请求信号量——maxConcurrentRequests = 真实在途 HTTP 请求数（所有引擎统一） */
   private requestSemaphore!: Semaphore;
@@ -80,6 +85,30 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
       write: (p, d) => this.app.vault.adapter.write(p, d),
       exists: (p) => this.app.vault.adapter.exists(p),
     };
+    // 1.5（F1）：卸载同步落盘 IO——Node fs writeSync+renameSync 原子替换（adapter 无同步写口）。
+    // basePath 拿不到（网络库等）或 fs 不可达时留 no-op：flushSync 会失败并回落异步 flush（尽力而为）。
+    // 实测（1022 冒烟）：Electron renderer 的原生 ESM import 不解析 Node 内置模块
+    // （import("fs") 抛 "Failed to resolve module specifier"），nodeIntegration 下
+    // globalThis.require 可用——双路探测，ESM 优先、require 回落
+    try {
+      let fsMod: typeof import("fs") | undefined;
+      try {
+        fsMod = await import("fs");
+      } catch {
+        const rq = (globalThis as { require?: (id: string) => typeof import("fs") }).require;
+        if (typeof rq === "function") fsMod = rq("fs");
+      }
+      const basePath = (this.app.vault.adapter as { basePath?: string }).basePath;
+      this.syncIO =
+        fsMod && basePath
+          ? {
+              writeSync: (p, d) => fsMod.writeFileSync(`${basePath}/${p}`, d, "utf8"),
+              renameSync: (f, to) => fsMod.renameSync(`${basePath}/${f}`, `${basePath}/${to}`),
+            }
+          : { writeSync: () => undefined, renameSync: () => undefined };
+    } catch {
+      this.syncIO = { writeSync: () => undefined, renameSync: () => undefined };
+    }
     // 4.3.1 HTTP 约定：统一 requestUrl（无 CORS 限制）；throw:false 保留状态码供错误分类
     // A2：先获取信号量再起超时（排队时间不吃超时预算）；真实在途 = maxConcurrentRequests
     this.requestSemaphore = new Semaphore(() => this.settings.maxConcurrentRequests);
@@ -164,7 +193,16 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     this.batcher = new BatchTranslator(() => this.provider, {
       windowMs: this.settings.batchWindowMs,
       concurrency: this.settings.maxConcurrentRequests,
-      onQueueChange: (pending) => this.updateStatusBar(pending),
+      onQueueChange: (pending) => {
+        this.updateStatusBar(pending);
+        // 1.5（F2）：批次全部结算（>0→0 边沿）且有脏数据、距上次落盘 ≥5s → 节流落盘。
+        // 真机实证（1022-1427）：30s 轮询窗口 30~60s，翻译完立即关闭即丢——把窗口压到 ≤5s
+        if (this.prevQueuePending > 0 && pending === 0 && this.cache.pendingWrites > 0) {
+          const last = this.cache.stats().lastFlushAt ?? 0;
+          if (Date.now() - last >= 5000) void this.cache.flush();
+        }
+        this.prevQueuePending = pending;
+      },
     });
     // 4.5 用量统计与月度预算（UsageTracker 持久化 usage.json，跨月自动清零）
     this.usageTracker = new UsageTracker(this.io, `${pluginDir}/usage.json`);
@@ -177,6 +215,8 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
       monthlyCharBudget: this.settings.monthlyCharBudget,
       // v1.1.5：cacheEnabled 接线（此前为死配置，缓存读写始终生效）
       isCacheEnabled: () => this.settings.cacheEnabled,
+      // 1.5（B3）：宽松缓存键开关（开时键去引擎/模型维度，跨模型复用译文）
+      isLooseCacheKey: () => this.settings.looseCacheKey,
       // 4.2.2 错误分类：Key 失效（401/403）立即引导，不等熔断
       onAuthFailure: () => new Notice(t("notice.auth-failed")),
       // v1.1.8：预算超限提示（types.ts 承诺的"超限提示"此前未实现，纯静默 = 用户实测"按钮失效"头号嫌疑）
@@ -237,7 +277,12 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     this.marketplacePatcher?.deactivate();
     this.windowHook?.deactivate();
     void this.batcher.flush();
-    void this.cache.flush();
+    // 1.5（F1）：卸载同步落盘——真机实证（1022-1427 E4/E5）onunload 的 void flush() 在
+    // 强杀与优雅关闭下都来不及完成，翻译成功未落盘的译文即丢失；Node fs 同步写+原子
+    // rename 是唯一可靠兜底。同步失败（网络库等）回落原异步路径（尽力而为）
+    if (!this.cache.flushSync(this.syncIO)) {
+      void this.cache.flush();
+    }
     // v1.2 B4：用量统计去抖落盘的兜底结算
     void this.usageTracker.flush();
   }
@@ -376,6 +421,10 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     if (!this.provider) {
       return { ok: false, message: t("common.purge-no-engine") };
     }
+    // 1.5（B3）：宽松缓存键下条目无引擎/模型维度可判——清理会误删共享条目，禁用并说明
+    if (this.settings.looseCacheKey) {
+      return { ok: false, message: t("status.cache-purge-loose") };
+    }
     const model = (this.provider as { modelId?: string }).modelId ?? "";
     const removed = this.cache.purgeMismatched(
       this.provider.id,
@@ -464,7 +513,16 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     this.batcher = new BatchTranslator(() => this.provider, {
       windowMs: this.settings.batchWindowMs,
       concurrency: this.settings.maxConcurrentRequests,
-      onQueueChange: (pending) => this.updateStatusBar(pending),
+      onQueueChange: (pending) => {
+        this.updateStatusBar(pending);
+        // 1.5（F2）：批次全部结算（>0→0 边沿）且有脏数据、距上次落盘 ≥5s → 节流落盘。
+        // 真机实证（1022-1427）：30s 轮询窗口 30~60s，翻译完立即关闭即丢——把窗口压到 ≤5s
+        if (this.prevQueuePending > 0 && pending === 0 && this.cache.pendingWrites > 0) {
+          const last = this.cache.stats().lastFlushAt ?? 0;
+          if (Date.now() - last >= 5000) void this.cache.flush();
+        }
+        this.prevQueuePending = pending;
+      },
     });
     this.coordinatorOptions.targetLang = this.settings.targetLang;
     this.coordinatorOptions.glossary = this.settings.glossary;

@@ -478,6 +478,17 @@ export class UutSettingTab extends PluginSettingTab {
           }
         });
       });
+    // 1.5（B3）：宽松缓存键——跨模型/引擎复用译文（多模型试探型用户的最大 token 放大器）
+    new Setting(el)
+      .setName(t("settings.cache.loose-key"))
+      .setDesc(t("settings.cache.loose-key.desc"))
+      .addToggle((tg) =>
+        tg.setValue(s.looseCacheKey).onChange(async (v) => {
+          s.looseCacheKey = v;
+          await this.plugin.saveSettings();
+          await this.renderTabs();
+        })
+      );
     const stats = this.plugin.cache.stats();
     const bytes = await this.plugin.cacheFileBytes();
     const sizeInfo =
@@ -510,13 +521,16 @@ export class UutSettingTab extends PluginSettingTab {
     new Setting(el)
       .setName(t("settings.cache.purge-stale"))
       .setDesc(t("settings.cache.purge-stale.desc"))
-      .addButton((b) =>
-        b.setButtonText(t("settings.cache.purge-stale")).onClick(async () => {
-          const res = await this.plugin.purgeStaleCacheEntries();
-          new Notice(`UUT：${res.message}`);
-          await this.renderTabs();
-        })
-      );
+      .addButton((b) => {
+        b.setButtonText(t("settings.cache.purge-stale"))
+          // 1.5（B3）：宽松键下条目无引擎/模型维度，清理会误删共享译文——禁用（后端同样拦截）
+          .setDisabled(s.looseCacheKey)
+          .onClick(async () => {
+            const res = await this.plugin.purgeStaleCacheEntries();
+            new Notice(`UUT：${res.message}`);
+            await this.renderTabs();
+          });
+      });
     new Setting(el)
       .setName(t("settings.cache.clear"))
       .setDesc(t("settings.cache.clear.desc"))

@@ -43,7 +43,7 @@ Obsidian 社区插件生态以英文为主，汉化依赖插件作者自觉。�
 - **费用透明**：设置页逐项标注 API 消耗风险与量级估算；完整折算模型见下方「费用估算」专节
 - **目标语言任意**：默认简体中文，可填 `ja` / `zh-Hant` / `ko` / `fr` 等任意语言代码，常用 12 语言快速下拉即选即存；缓存按语言隔离，随时切换互不影响
 - **插件界面语言（v1.4）**：跟随 Obsidian / 中文 / English 三档可选——英文界面为全量覆盖包（250 键），命令名、状态栏、设置页与错误消息全覆盖；默认跟随 Obsidian，中文默认体验零回归
-- **配置热生效**：改配置即重置熔断并全量重扫界面，无需重启；缓存自动落盘（满 100 条或隔 30 秒），崩溃最多丢 30 秒译文
+- **配置热生效**：改配置即重置熔断并全量重扫界面，无需重启；**落盘三保险（v1.5）**——每批翻译结算后约 1~5 秒即写盘、退出 Obsidian 时同步落盘（正常关闭零丢失）、临时文件原子替换防写坏；崩溃/强杀最多丢最后几秒
 - **隐私优先**：无遥测、无外发请求（除你配置的翻译端点）；API Key 经 safeStorage 加密
 
 ### 安装
@@ -112,7 +112,7 @@ DeepSeek flash 系列自 2026-09-10 12:00（北京时间）起的定价（每百
 | 启用本地缓存 | 译文持久化到 translation-cache.json，同一文本只付一次费 | 只有排查翻译异常时才需要关 |
 | 缓存条目上限 | 内存=磁盘同一容量（默认 5 万，可调 1000–20 万；磁盘另有 64MB 硬顶），超出淘汰最久未用条目 | 市场 README 翻得多就往宽设——纯文本不占空间，上限太低会提前淘汰译文、重复消耗 API；调小立即生效 |
 | 缓存统计 | 条数、命中率、磁盘文件实际大小、最后落盘时间 | 命中率越高越省钱 |
-| 立即落盘 | 新译文先在内存，每 30 秒检查一次（满 100 条或隔 30 秒）即写盘，另有 `.bak` 兜底副本（主文件损坏自动回落）；点此立即写入磁盘 | 翻完一大批 README 后、关机/重启 Obsidian 前点一下；崩溃/强杀最多丢 30 秒新译文，正常退出不受影响 |
+| 立即落盘 | 新译文先在内存，v1.5 起每批翻译结算后约 1~5 秒自动写盘、退出 Obsidian 时同步落盘（正常关闭零丢失）、原子替换防写坏，另有 `.bak` 兜底副本；点此立即写入磁盘 | 应急/图安心用——v1.5 起关机重启前**不再需要**手动点；崩溃/强杀最多丢最后几秒新译文 |
 | 清理失效条目 | 删除与当前「引擎+语言+模型」不匹配的条目（缓存键含这三维，换模型后旧条目永不命中，纯占空间） | 换过模型/引擎/目标语言之后点一次；v1.1.9 前的旧条目无模型标记，只能按引擎+语言判定 |
 | 清空缓存 | 删除全部缓存译文并重置界面译态 | 译文异常（如嵌套乱码）排查、换术语表后重来；⚠️ 之后全部界面重译一遍（核心界面 ≈ ¥0.30 以内） |
 | 导出 / 导入 | 缓存与库根目录 JSON 文件互转（FR-12） | 换机迁移、把译文词表分享给他人（对方导入后零成本复用） |
@@ -132,33 +132,26 @@ v1.2 起 OpenAI 兼容通道已**合批**（单行短文本 40 条合一次请�
 
 **推荐配置一览**：关闭思考模式 = 开 ｜ 模型 = flash/turbo 档 ｜ 批量窗口 = 100 ｜ 并发 = 5 ｜ 超时 = 30000 ｜ 显示模式 = 纯译文
 
-### 免费额度教程：火山方舟「协作奖励计划」（每天用多少、次日返多少）
+### 低成本模型推荐：几厘钱翻完全部界面
 
-火山引擎方舟平台的协作奖励计划：**授权推理接入点 → 当天产生的 token 用量，次日 11 点后以等额免费资源包形式返还，自动抵扣账单**——先记账、后抵扣，最终 0 元。个人实名账号单模型每日返还上限 50 万 tokens（本插件核心界面全量翻译 v1.2 合批后一次性仅约 1 万 tokens，之后全部走缓存且升级不清空，日常用量远低于此上限）。
+> 下述价格为 **2026-10 快照**，各家调价频繁，以官方价格页为准：[阿里云百炼价格](https://help.aliyun.com/zh/model-studio/model-pricing) / [DeepSeek 定价](https://api-docs.deepseek.com/zh-cn/quick_start/pricing)。本插件核心界面全量翻译一次约 1 万 tokens，之后全部走缓存且升级不清空——按下列价格，一次全量翻译成本在**分厘级**。
 
-**为什么说它特别适合本插件**：奖励计划的交换条件是"授权接入点的对话数据被匿名采集用于模型优化"。而本插件送译的**只有界面文本**——按钮、设置项、插件市场里的英文 README——不含你的任何笔记与隐私内容，采集代价在这个场景下几乎没有实际影响。
+**首选：qwen-flash（阿里云百炼）** —— 便宜、速度快、国内直连，UI 短文本翻译质量绰绰有余：
 
-**接入步骤**：
+- 价格快照：输入约 **0.183 元/百万 tokens**（缓存命中 0.073），输出约 **1.468 元/百万**——全量翻完一次约几厘钱；百炼新用户通常另有各模型限时免费额度（以官网为准）
+- 接入（OpenAI 兼容通道）：**设置 → Universal UI Translator → API 配置** → 引擎选 OpenAI 兼容接口
+  - Base URL：`https://dashscope.aliyuncs.com/compatible-mode/v1`
+  - API Key：[百炼控制台](https://bailian.console.aliyun.com/)创建
+  - 模型：`qwen-flash`
+  - 打开「关闭思考模式」——UI 短文本无需推理，关掉更快、更省 tokens
 
-1. 注册[火山引擎](https://www.volcengine.com/)并完成实名认证（个人实名即可参加）
-2. 打开[协作奖励计划页](https://ark.volcengine.com/region:cn-beijing/openManagement/rewardPlan)，按页面指引为 Doubao-Seed 系列模型的推理接入点授权（首次授权还有一次性的冷启动免费包）
-3. 在火山方舟控制台创建 API Key
-4. 打开 Obsidian **设置 → Universal UI Translator → API 配置**：
-   - 翻译引擎选 **OpenAI 兼容接口**
-   - **Base URL 填**：`https://ark.cn-beijing.volces.com/api/v3`
-   - **API Key 填**：上一步创建的密钥
-   - **模型填**：`doubao-seed-2-1-turbo-260628`
-   - 打开 **「关闭思考模式」** 开关（本插件会按火山方舟规范注入 `thinking: disabled`——UI 短文本无需推理，关掉更快、更省 tokens）
-   - 点「测试连接」，成功后即可使用
-5. 次日 11 点后到方舟控制台 **资源中心 → 资源包管理** 核对奖励包到账与抵扣情况
+**备选：DeepSeek（deepseek-chat，V4.1 Flash 档）**：
 
-**注意事项（官方规则的踩坑点）**：
+- 价格快照：非高峰输入 $0.15 / 输出 $0.60 每百万 tokens（美元计价、分时段 + 缓存计价，缓存命中极便宜；高峰约翻倍）；Base URL：`https://api.deepseek.com`；务必打开「关闭思考模式」
 
-- **奖励按接入点授权统计**：若控制台为你分配了接入点 ID（形如 `ep-xxxx`），把模型框改填该接入点 ID 更稳妥；填了**未授权**的接入点 = 不采集也不返还，直接扣余额
-- **不是调用时免费**：调用当先生成账单挂账，次日奖励包到账后自动抵扣——账户建议预留少量余额，防止单日用量超上限后欠费停机、API 报错
-- **奖励包 30 天有效**，过期清零；多个奖励包并存时优先消耗快过期的
-- **额度性质是抵扣券**：只抵扣在线推理的输入/输出/缓存命中 token 费用（正是本插件的调用类型）；批量推理、知识库等费用不适用
-- **隐私边界**：授权接入点收发的文本会被匿名采集且**不可撤回**。本插件只发送界面文本，风险极低；但请**不要把这个 Key 复用到处理私密内容的其他工具**——那种场景建议另建一个不授权的接入点，各走各的
+**完全免费**：本地 Ollama / LM Studio（数据不出本机）；DeepL / Google / Azure 传统翻译引擎的免费档（见上方引擎表）。另外，**经常换模型试探的用户**建议打开设置里的「跨模型/引擎复用缓存」（v1.5 起）——默认每换一次模型同一界面会整体重译一遍，这是最容易忽视的用量放大器。
+
+**术语表**：想固定某些词条的译法（比如特定插件名保留英文），在设置的术语表里加一条即可，命中词条不走 API。
 
 ### 安全与隐私
 
@@ -180,7 +173,7 @@ v1.2 起 OpenAI 兼容通道已**合批**（单行短文本 40 条合一次请�
 ```bash
 npm install
 npm run build          # tsc 类型检查 + esbuild（刻意不做 minify）
-npm test               # 245 个单元与集成测试
+npm test               # 257 个单元与集成测试
 npm run test:coverage  # 核心模块行覆盖率 75.9%–100%
 ```
 
@@ -214,7 +207,7 @@ The plugin ships **no translation engine or glossary of its own**. Translation q
 - **On-demand marketplace translation**: a "译" button on each community-plugin item translates just that entry — cache hits cost zero API calls. Since v1.1.5 the marketplace no longer auto-translates while scrolling (that high-risk toggle ships off) — on-demand is the recommended path
 - **Any target language**: defaults to `zh-CN`; set `ja` / `zh-Hant` / `ko` / `fr` or any language code, with a quick dropdown of 12 common languages — the cache is keyed per language, switch anytime
 - **Plugin UI language (v1.4)**: follow Obsidian / Chinese / English — the English UI is a full coverage pack (250 keys) spanning command names, the status bar, settings pages and error messages; defaults to following Obsidian, and the default Chinese experience is unchanged
-- **Hot-applied settings**: config changes reset the circuit breaker and rescan the rendered UI instantly — no restart needed; cache auto-flushes to disk (at 100 entries or every 30 s), crash-safe
+- **Hot-applied settings**: config changes reset the circuit breaker and rescan the rendered UI instantly — no restart needed. **Triple flush safety (v1.5)**: each finished translation batch hits disk within ~1–5 s, quitting Obsidian flushes synchronously (clean exit loses nothing), and writes are atomic via temp-file rename; a crash loses at most the last few seconds
 - **Privacy by design**: no telemetry, no outbound calls except your configured translation endpoint; API keys encrypted with Electron `safeStorage`
 
 ### Installation
@@ -252,14 +245,14 @@ Rules of thumb (UI text → tokens): input tokens ≈ English chars / 4; output 
 
 How it stays near zero: ① translations are cached locally — the same text is never billed twice; ② the monthly character budget trips an automatic circuit-breaker; ③ glossary hits bypass the API entirely; ④ a local model (Ollama / LM Studio) is completely free and never leaves your machine. Since v1.2, Obsidian/plugin upgrades no longer invalidate the cache, so there is no periodic re-translation cost.
 
-For users in China, a free-tier walkthrough (Volcano Ark reward program — daily usage refunded as credits) is in the 中文 section above.
+For users in China, the 中文 section above has cheap-model picks (qwen-flash ~¥0.18 per million input tokens; DeepSeek flash tier) — a full one-time UI translation costs fractions of a cent. Since v1.5, an opt-in "loose cache key" reuses translations across models/engines, so switching models no longer re-translates everything.
 
 ### Usage stats & cache management (v1.1.9+, real token basis in v1.3)
 
 - The **用量统计 (Usage)** tab answers "how much API have I actually used" on two bases: since v1.3 the OpenAI-compatible channel records the `usage` field returned by the API (**billing-basis, exact** — including per-request system-prompt overhead), while character-based estimates (input ≈ chars/4, output ≈ chars/2.5) remain for historical data and non-token providers. The 30-day chart toggles between bases and hovering shows both. Monthly totals cover calls, characters and tokens (measured + estimated); enter your own per-million prices in the API tab to see today/month **measured cost**. Session cards show live rate (1/5-minute windows) and peak, mirrored by the always-on status-bar segment and the badge inside the community-plugin browser popup. **Cache and glossary hits cost no API calls and are not counted**; daily detail is recorded from v1.1.9 onward (usage.json stays backward-compatible; day buckets are kept for 62 days; monthly-budget accounting is unchanged).
 - The **缓存 (Cache)** tab documents every action in a what / when-to-use / cost format:
   - **缓存条目上限** — one shared memory+disk capacity (default 50k entries, adjustable 1k–200k; 64 MB disk byte ceiling). Translations are plain text and cheap to keep: set it wide so marketplace README translations are not evicted early and re-billed.
-  - **立即落盘 (Flush now)** — new translations live in memory and are written to disk on a 30 s check (at ≥100 pending entries or after 30 s), with a `.bak` fallback copy for corruption recovery, plus a forced flush on clean unload. A crash loses at most 30 s of new translations.
+  - **立即落盘 (Flush now)** — new translations live in memory; since v1.5 each finished batch auto-flushes within ~1–5 s, quitting Obsidian flushes synchronously (clean exit loses nothing), writes are atomic, and a `.bak` copy guards against corruption. The button is for peace of mind — no longer required before quitting; a crash loses at most the last few seconds.
   - **清理失效条目 (Purge stale entries)** — deletes cache entries that no longer match your current provider + language + model. The cache key embeds all three, so after switching models the old entries can never hit again and only waste space. Entries written before v1.1.9 carry no model marker and are judged by provider + language only.
   - **清空缓存 (Clear)** — wipes all cached translations and resets the UI translation state; everything retranslates once on next view (core UI ≈ ¥0.30).
   - **导出 / 导入 (Export / Import)** — move the cache to/from a JSON file in the vault root for migration or sharing; the recipient reuses your translations at zero API cost.
@@ -297,7 +290,7 @@ Recommended: thinking off · flash/turbo-tier model · batch window 100 · concu
 ```bash
 npm install
 npm run build          # tsc type-check + esbuild (deliberately not minified)
-npm test               # 245 unit & integration tests
+npm test               # 257 unit & integration tests
 npm run test:coverage  # core modules 75.9%–100% line coverage
 ```
 

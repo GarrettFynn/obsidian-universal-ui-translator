@@ -44,6 +44,10 @@ export interface PluginSettings {
   providers: Record<string, ProviderConfig>;
   cacheEnabled: boolean;
   cacheMaxEntries: number;
+  /** 1.5（B3）：宽松缓存键——开时键退化为 sha256(原文+目标语言)，跨引擎/模型复用译文
+   *  （多模型试探型用户每换一次模型即全量重译的最大 token 放大器，真机实测 9 模型键 8213 条重复副本）；
+   *  默认关闭保持质量口径。开启时「清理失效条目」按钮禁用（共享键条目无引擎维度可清） */
+  looseCacheKey: boolean;
   batchWindowMs: number;
   maxConcurrentRequests: number;
   requestTimeoutMs: number;                 // 默认 30000（R-23：慢引擎上调，4.2.2）
@@ -89,6 +93,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   providers: {},
   cacheEnabled: true,
   cacheMaxEntries: 50000,
+  looseCacheKey: false,
   batchWindowMs: 100,
   maxConcurrentRequests: 3,
   requestTimeoutMs: 30000,
@@ -140,4 +145,15 @@ export interface TextFileIO {
   read(path: string): Promise<string>;
   write(path: string, data: string): Promise<void>;
   exists(path: string): Promise<boolean>;
+}
+
+/**
+ * 1.5（F1）：同步文件 IO 抽象——卸载瞬间的落盘兜底专用。
+ * onunload 是同步函数且应用退出不等异步 IO（真机实证：优雅关闭下 void flush() 也来不及完成，
+ * 见 文档/1022-1427 报告 E5），故走 Node fs 的 writeSync+renameSync 原子替换。
+ * 真实环境由装配层动态 import("fs") 实现；单元测试注入内存实现。
+ */
+export interface SyncFileIO {
+  writeSync(path: string, data: string): void;
+  renameSync(from: string, to: string): void;
 }

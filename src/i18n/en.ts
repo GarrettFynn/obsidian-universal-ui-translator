@@ -217,6 +217,11 @@ export const en: Record<string, string> = {
   "settings.cache.max-entries": "Cache entry limit",
   "settings.cache.max-entries.desc":
     "What: shared by memory and disk (default 50000, range 1000–200000; disk also has a 64MB byte cap, first-come first-trimmed); oldest entries evicted beyond it. When to adjust: market README translations add many entries; a low limit evicts early and re-spends API next time — translations are plain text and small, set generously. Trade-off: a bigger cache loads longer at startup (milliseconds) and uses more memory. Changes apply immediately; lowering evicts the oldest entries right away",
+  "settings.cache.loose-key": "Reuse cache across models/engines (loose cache key)",
+  "settings.cache.loose-key.desc":
+    "What: the cache key degrades to text+target language, so old translations are reused after switching models or engines — no full re-translation. When to enable: if you often try different models (each switch otherwise re-translates the whole UI — the biggest usage amplifier). Trade-off: translations from different models get mixed in one cache; “Purge stale entries” is disabled while this is on. Turning it off restores engine+language+model isolation",
+  "status.cache-purge-loose":
+    "Loose cache key (cross-model/engine reuse) is on: entries carry no engine/model dimension to match, purging would delete shared translations — disabled. Turn the toggle off first if you need to purge",
   "settings.cache.disk-absent": "Disk file not created yet",
   "settings.cache.disk-size": "Disk file ≈ {mb} MB",
   "settings.cache.last-flush": "Last flush {time}",

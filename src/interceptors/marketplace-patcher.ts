@@ -1,6 +1,7 @@
 import { Notice } from "obsidian";
 import { TranslationCoordinator } from "../core/coordinator";
 import type { TranslateOutcome } from "../core/coordinator";
+import { FilterEngine } from "../filters/filter-engine";
 import { t } from "../i18n";
 
 type FormatFn = (translated: string, original: string) => string | null;
@@ -160,7 +161,8 @@ export class MarketplacePatcher {
       btn.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        void this.translateItem(item as HTMLElement, btn);
+        // 1.5 G2：条目卡片的插件显示名/作者名按专名形态跳过送译（保留原文，便于按名搜索）
+        void this.translateItem(item as HTMLElement, btn, undefined, { protectProperNouns: true });
       });
       item.appendChild(btn);
       added++;
@@ -197,16 +199,20 @@ export class MarketplacePatcher {
     btn.textContent = t("market.button.glyph");
     btn.setAttribute("data-no-translate", "true");
     btn.setAttribute("title", t("market.button.title-detail"));
-    btn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      // v1.1.6：翻译根提升为整个市场弹窗、排除左侧列表——1.13.7 详情区是多个并列兄弟容器
-      // （简介头部与 README 正文分属不同子树），v1.1.5 以宿主容器为根只翻译了简短预览
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        // v1.1.6：翻译根提升为整个市场弹窗、排除左侧列表——1.13.7 详情区是多个并列兄弟容器
+        // （简介头部与 README 正文分属不同子树），v1.1.5 以宿主容器为根只翻译了简短预览
+        const modal = detail.closest<HTMLElement>(".mod-community-plugin");
+        void this.translateItem(modal ?? detail, btn, ".modal-sidebar");
+      });
+      detail.insertBefore(btn, detail.firstChild);
+      // 1.5 F3：详情重渲染（按钮被冲掉重注入）→ 自动回写已译内容（cache-only，零 API）。
+      // 覆盖场景：翻译中途关闭弹窗——译文已在缓存，重开时自动呈现，无需重点按钮
       const modal = detail.closest<HTMLElement>(".mod-community-plugin");
-      void this.translateItem(modal ?? detail, btn, ".modal-sidebar");
-    });
-    detail.insertBefore(btn, detail.firstChild);
-    return true;
+      if (modal) void this.cacheOnlyPass(modal, ".modal-sidebar");
+      return true;
   }
 
   /**
@@ -219,7 +225,8 @@ export class MarketplacePatcher {
   private async translateItem(
     item: HTMLElement,
     btn: HTMLButtonElement,
-    skipClosest?: string
+    skipClosest?: string,
+    opts?: { protectProperNouns?: boolean }
   ): Promise<void> {
     btn.textContent = "…";
     btn.setAttribute("disabled", "true");
@@ -228,12 +235,12 @@ export class MarketplacePatcher {
       // v1.2 P1 一级：按钮内确定型进度（开译即知总量——translatePass 先收集后送译）
       const stats = await this.translatePass(item, skipClosest, (settled, total) => {
         if (btn.isConnected && total > 0) btn.textContent = `${settled}/${total}`;
-      });
+      }, opts);
       // 自动补救：存在游离节点（翻译途中详情区被重渲染）且根容器仍存活 → 重跑一次：
       // 重生节点带着原文出现，译文已进缓存，本次为零成本回写（部分游离同样补救——
       // 否则用户看到中英夹杂需要再点一次）
       if (stats.detached > 0 && item.isConnected) {
-        const retry = await this.translatePass(item, skipClosest);
+        const retry = await this.translatePass(item, skipClosest, undefined, opts);
         stats.done += retry.done;
         stats.modeSuppressed += retry.modeSuppressed;
         stats.outcomes.push(...retry.outcomes);
@@ -282,7 +289,8 @@ export class MarketplacePatcher {
   private async translatePass(
     item: HTMLElement,
     skipClosest?: string,
-    onSettle?: (settled: number, total: number) => void
+    onSettle?: (settled: number, total: number) => void,
+    opts?: { protectProperNouns?: boolean }
   ): Promise<{
     done: number;
     detached: number;
@@ -308,7 +316,13 @@ export class MarketplacePatcher {
       cur = walker.nextNode();
     }
     // P1：先过滤出送译目标（与下方 <2 拒译同口径）——总量开译即知，支撑确定型进度
-    const targets = nodes.filter((n) => (n.nodeValue ?? "").trim().length >= 2);
+    // 1.5 G2：条目通道启用专名形态跳过——插件显示名（"Dataview"）、作者名（"Michael Brenan"）
+    // 整串保留原文；简介（自然语言句子）不匹配形态不受影响
+    const targets = nodes.filter(
+      (n) =>
+        (n.nodeValue ?? "").trim().length >= 2 &&
+        !(opts?.protectProperNouns && FilterEngine.isProperNounLike((n.nodeValue ?? "").trim()))
+    );
     const total = targets.length;
     let settled = 0;
     // P1 二级：注册到悬浮进度条（总量为 0 不注册——避免无意义闪烁）
@@ -388,8 +402,52 @@ export class MarketplacePatcher {
     return { done, detached, modeSuppressed, outcomes, firstError };
   }
 
-  /** P1 二级：注册一趟在途翻译（取消该文档待移除计时器，复用已有浮条） */
-  private beginProgress(doc: Document, total: number): { settled: number; total: number } {
+  /**
+   * 1.5（F3）：cache-only 自动回写——只查缓存与术语表，未命中不发任何 API（零 token 成本）。
+   * 详情重渲染/弹窗重开时由 injectDetailButton 触发：上次翻译中途关窗的已译内容自动呈现。
+   * 回写的文本节点内容变为目标语言后，后续手动「译」趟经 FilterEngine 规则 5c 天然跳过
+   * （不打 data-uut 标记，避免与手动趟的延迟打标状态交叉）。
+   */
+  private async cacheOnlyPass(item: HTMLElement, skipClosest?: string): Promise<void> {
+    const doc = item.ownerDocument;
+    if (!doc) return;
+    const skipSelector =
+      "[data-no-translate], [data-uut], code, pre" + (skipClosest ? `, ${skipClosest}` : "");
+    const walker = doc.createTreeWalker(item, NodeFilter.SHOW_TEXT, {
+      acceptNode: (n: Node) =>
+        n.parentElement?.closest(skipSelector) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
+    });
+    const nodes: Text[] = [];
+    let cur = walker.nextNode();
+    while (cur) {
+      nodes.push(cur as Text);
+      cur = walker.nextNode();
+    }
+    await Promise.all(
+      nodes.map(async (node) => {
+        const original = node.nodeValue ?? "";
+        const trimmed = original.trim();
+        if (trimmed.length < 2) return;
+        try {
+          const res = await this.coordinator.translateWithOutcome(
+            trimmed,
+            { source: "dom", pluginId: "marketplace" },
+            { cacheOnly: true }
+          );
+          if (res.outcome !== "cache" && res.outcome !== "glossary") return; // 未命中零动作
+          const formatted = this.format(res.text, trimmed);
+          if (formatted === null || formatted === trimmed) return; // 模式抑制/译文同文
+          if (!node.isConnected) return; // 重渲染游离：放弃（下次注入再试）
+          node.nodeValue = original.replace(trimmed, formatted);
+          this.onWriteBack?.(node);
+        } catch {
+          // 自动回写静默失败：不影响手动通道
+        }
+      })
+    );
+  }
+
+  /** P1 二级：注册一趟在途翻译（取消该文档待移除计时器，复用已有浮条） */  private beginProgress(doc: Document, total: number): { settled: number; total: number } {
     let set = this.activeProgress.get(doc);
     if (!set) {
       set = new Set();

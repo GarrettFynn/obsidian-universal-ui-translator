@@ -83,9 +83,15 @@ export class FilterEngine {
     // 规则 2b：超长文本拒绝（v1.1.5：失控嵌套文本曾把缓存撑到数百 MB、单请求成本失控）
     if (t.length > FilterEngine.MAX_TRANSLATABLE_CHARS) return false;
     // 规则 3：文件路径（盘符或斜杠开头 / 含路径分隔符 / 文件名.扩展名）
-    if (/^([a-zA-Z]:[\\/]|[\\/]|~[\\/]|\.{1,2}[\\/])/.test(t)) return false;
+    if (/^([a-zA-Z]:[\\/]|[\\/]|~[\\/]|\\.{1,2}[\\/])/.test(t)) return false;
     if (/^[\w.-]+([\\/][\w .-]+)+$/.test(t)) return false;
     if (/^[\w-]+\.[a-zA-Z0-9]{1,5}$/.test(t)) return false;
+    // 规则 3b（1.5 G1）：技术标识符——整串 kebab-case / snake_case（如 obsidian-git、
+    // universal-ui-translator、config_setting）。自然语言文案极少呈整串全小写连字/下划线
+    // 形态（正常文案首字母大写或多词成句）；drag-and-drop 这类连字短语保留原文亦是业界惯例。
+    // 误伤可由用户 skipPatterns 反向覆盖不了（跳过类规则）——量级极低，接受。
+    if (/^[a-z][a-z0-9]*(-[a-z0-9]+)+$/.test(t)) return false;
+    if (/^[a-z][a-z0-9]*(_[a-z0-9]+)+$/.test(t)) return false;
     // 规则 4：URL / URI
     if (/^(https?|ftp|obsidian|mailto|tel):/i.test(t)) return false;
     // 规则 5：不含连续 2 个拉丁字母（已汉化文本、纯 CJK 文本不再送译）
@@ -113,6 +119,16 @@ export class FilterEngine {
   static extractPlaceholders(text: string): string[] {
     const matches = text.match(/\{\d+\}|%[sd]|\{\{[^}]+\}\}/g);
     return matches ?? [];
+  }
+
+  /**
+   * 1.5（G2）：专名形态判定——1~4 个首字母大写词（如 "Dataview"、"Obsidian Git"、
+   * "Michael Brenan"）。仅市场条目卡片的收集阶段使用（卡片内容 = 插件显示名+作者名+
+   * 下载量+简介，前三者按此形态跳过送译保留原文；详情 README 的章节标题同形态但
+   * 那里不启用——避免漏译 "Installation" 等标题）。
+   */
+  static isProperNounLike(text: string): boolean {
+    return /^[A-Z][\w&'.-]*(\s+[A-Z][\w&'.-]*){0,3}$/.test(text.trim());
   }
 
   /** 规则 6：占位符 token 化保护，送译 masked 而非原文 */

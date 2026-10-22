@@ -51,14 +51,14 @@ describe("MarketplacePatcher（v1.1.0 社区市场条目级「译」按钮）", 
   it("条目注入按钮；点击翻译该条目文本；按钮自身不被翻译；重复扫描不重复注入", async () => {
     const p = new MarketplacePatcher(stubCoordinator(), (t) => t);
     patchers.push(p);
-    const item = makeItem("Super Plugin");
+    const item = makeItem("Super fast search tool");
     expect(p.activate()).toBe(true);
     const btn = item.querySelector(":scope > .uut-mkt-btn") as HTMLButtonElement | null;
     expect(btn).toBeTruthy();
     expect(btn!.getAttribute("data-no-translate")).toBe("true");
     btn!.click();
     await tick();
-    expect(item.textContent).toContain("译:Super Plugin");
+    expect(item.textContent).toContain("译:Super fast search tool");
     // 按钮自身文本（译/✓1）未被翻译
     expect(btn!.textContent).not.toContain("译:");
     // 幂等：再次扫描不重复注入
@@ -68,12 +68,12 @@ describe("MarketplacePatcher（v1.1.0 社区市场条目级「译」按钮）", 
 
   it("deactivate 移除全部按钮；断开后新增条目不再注入", async () => {
     const p = new MarketplacePatcher(stubCoordinator(), (t) => t);
-    const item = makeItem("Another Plugin");
+    const item = makeItem("Another note tool");
     p.activate();
     expect(item.querySelector(".uut-mkt-btn")).toBeTruthy();
     p.deactivate();
     expect(document.querySelector(".uut-mkt-btn")).toBeNull();
-    const late = makeItem("Late Plugin");
+    const late = makeItem("Late night theme");
     await tick();
     expect(late.querySelector(".uut-mkt-btn")).toBeNull();
   });
@@ -112,16 +112,16 @@ describe("MarketplacePatcher（v1.1.0 社区市场条目级「译」按钮）", 
       (n: Text) => writtenBack.push(n.nodeValue ?? "")
     );
     patchers.push(p);
-    const item = makeItem("Super Plugin");
+    const item = makeItem("Super fast search tool");
     p.activate();
     const btn = item.querySelector(":scope > .uut-mkt-btn") as HTMLButtonElement;
     btn.click();
     await tick();
-    expect(item.textContent).toContain("译:Super Plugin");
+    expect(item.textContent).toContain("译:Super fast search tool");
     // 已译节点父元素打标；onWriteBack 逐节点登记（供 DOMPatcher 去重账本）
     const nameEl = item.querySelector(".community-item-name") as HTMLElement;
     expect(nameEl.getAttribute("data-uut")).toBe("mkt");
-    expect(writtenBack.some((v) => v.includes("译:Super Plugin"))).toBe(true);
+    expect(writtenBack.some((v) => v.includes("译:Super fast search tool"))).toBe(true);
     // 重复点击：已译节点被跳过，零送译
     const callCount = calls.length;
     btn.click();
@@ -253,7 +253,7 @@ describe("v1.1.8 失效感知：失败反馈 / 存活检查 / 自动重试 / 异
       notices.push(m)
     );
     patchers.push(p);
-    const item = makeItem("Super Plugin");
+    const item = makeItem("Super fast search tool");
     p.activate();
     const btn = item.querySelector(":scope > .uut-mkt-btn") as HTMLButtonElement;
     btn.click();
@@ -278,7 +278,7 @@ describe("v1.1.8 失效感知：失败反馈 / 存活检查 / 自动重试 / 异
       notices.push(m)
     );
     patchers.push(p);
-    const item = makeItem("Super Plugin");
+    const item = makeItem("Super fast search tool");
     p.activate();
     const btn = item.querySelector(":scope > .uut-mkt-btn") as HTMLButtonElement;
     btn.click();
@@ -297,7 +297,7 @@ describe("v1.1.8 失效感知：失败反馈 / 存活检查 / 自动重试 / 异
       notices.push(m)
     );
     patchers.push(p);
-    const item = makeItem("Super Plugin");
+    const item = makeItem("Super fast search tool");
     p.activate();
     const btn = item.querySelector(":scope > .uut-mkt-btn") as HTMLButtonElement;
     btn.click();
@@ -316,7 +316,7 @@ describe("v1.1.8 失效感知：失败反馈 / 存活检查 / 自动重试 / 异
         if (firstPass) {
           firstPass = false;
           // 模拟翻译途中详情区被重渲染：原节点（含按钮）销毁、同名原文节点重生
-          item.innerHTML = '<div class="community-item-name">Super Plugin</div>';
+          item.innerHTML = '<div class="community-item-name">Super fast search tool</div>';
           return { text: `译:${t}`, outcome: "translated" as const };
         }
         // 重试趟：第一趟译文已进缓存，零成本命中
@@ -332,13 +332,13 @@ describe("v1.1.8 失效感知：失败反馈 / 存活检查 / 自动重试 / 异
       (m) => notices.push(m)
     );
     patchers.push(p);
-    item = makeItem("Super Plugin");
+    item = makeItem("Super fast search tool");
     p.activate();
     const btn = item.querySelector(":scope > .uut-mkt-btn") as HTMLButtonElement;
     btn.click();
     await tick();
     // 自动重试把重生节点回写成功——用户不再需要手动点第二次
-    expect(item.textContent).toContain("译:Super Plugin");
+    expect(item.textContent).toContain("译:Super fast search tool");
     expect(notices).toHaveLength(0);
   });
 
@@ -350,7 +350,7 @@ describe("v1.1.8 失效感知：失败反馈 / 存活检查 / 自动重试 / 异
     } as unknown as TranslationCoordinator;
     const p = new MarketplacePatcher(coord, (t) => t, () => {}, undefined, undefined, () => {});
     patchers.push(p);
-    const item = makeItem("Super Plugin");
+    const item = makeItem("Super fast search tool");
     p.activate();
     const btn = item.querySelector(":scope > .uut-mkt-btn") as HTMLButtonElement;
     btn.click();
@@ -432,7 +432,7 @@ describe("v1.1.8 复查补强：兄弟锁定 / 显示原文模式 / 部分游离
       notices.push(m)
     );
     patchers.push(p);
-    const item = makeItem("Super Plugin");
+    const item = makeItem("Super fast search tool");
     p.activate();
     const btn = item.querySelector(":scope > .uut-mkt-btn") as HTMLButtonElement;
     btn.click();
@@ -440,7 +440,7 @@ describe("v1.1.8 复查补强：兄弟锁定 / 显示原文模式 / 部分游离
     expect(btn.textContent).toBe("译"); // 中性可重试，而非伪装 ✓
     expect(notices).toHaveLength(1);
     expect(notices[0]).toContain("临时显示原文");
-    expect(item.querySelector(".community-item-name")!.textContent).toBe("Super Plugin");
+    expect(item.querySelector(".community-item-name")!.textContent).toBe("Super fast search tool");
   });
 
   it("部分游离自动补救：一趟内成功+游离混合时自动补一趟（缓存命中零成本），无需用户再点", async () => {
@@ -487,7 +487,7 @@ describe("v1.1.8 复查补强：兄弟锁定 / 显示原文模式 / 部分游离
       translateWithOutcome: async (t: string) => {
         callCount++;
         // 每趟都再重渲染一次 → 两趟回写目标全部游离
-        item.innerHTML = '<div class="community-item-name">Super Plugin</div>';
+        item.innerHTML = '<div class="community-item-name">Super fast search tool</div>';
         return { text: `译:${t}`, outcome: "translated" as const };
       },
     } as unknown as TranslationCoordinator;
@@ -496,7 +496,7 @@ describe("v1.1.8 复查补强：兄弟锁定 / 显示原文模式 / 部分游离
       notices.push(m)
     );
     patchers.push(p);
-    item = makeItem("Super Plugin");
+    item = makeItem("Super fast search tool");
     p.activate();
     const btn = item.querySelector(":scope > .uut-mkt-btn") as HTMLButtonElement;
     btn.click();
@@ -524,7 +524,7 @@ describe("v1.2 P1 翻译进度：按钮计数与悬浮进度条", () => {
     } as unknown as TranslationCoordinator;
     const p = new MarketplacePatcher(coord, (t) => t);
     patchers.push(p);
-    const item = makeItem("Super Plugin");
+    const item = makeItem("Super fast search tool");
     p.activate();
     const btn = item.querySelector(":scope > .uut-mkt-btn") as HTMLButtonElement;
     btn.click();
@@ -557,8 +557,8 @@ describe("v1.2 P1 翻译进度：按钮计数与悬浮进度条", () => {
     } as unknown as TranslationCoordinator;
     const p = new MarketplacePatcher(coord, (t) => t);
     patchers.push(p);
-    const itemA = makeItem("Plugin Alpha");
-    const itemB = makeItem("Plugin Beta");
+    const itemA = makeItem("Alpha note tool");
+    const itemB = makeItem("Beta calendar tool");
     p.activate();
     (itemA.querySelector(":scope > .uut-mkt-btn") as HTMLButtonElement).click();
     (itemB.querySelector(":scope > .uut-mkt-btn") as HTMLButtonElement).click();
@@ -597,7 +597,7 @@ describe("v1.2 P1 翻译进度：按钮计数与悬浮进度条", () => {
       },
     } as unknown as TranslationCoordinator;
     const p = new MarketplacePatcher(coord, (t) => t);
-    const item = makeItem("Super Plugin");
+    const item = makeItem("Super fast search tool");
     p.activate();
     (item.querySelector(":scope > .uut-mkt-btn") as HTMLButtonElement).click();
     await tick();
@@ -626,5 +626,88 @@ describe("v1.2 P1 翻译进度：按钮计数与悬浮进度条", () => {
     expect(badge.classList.contains("uut-hidden")).toBe(true);
     p.deactivate();
     expect(doc.querySelector(".uut-mkt-usage")).toBeNull();
+  });
+});
+
+describe("1.5 G2：条目卡片专名形态跳过（插件名/作者名保留原文）", () => {
+  const patchers: MarketplacePatcher[] = [];
+  afterEach(() => {
+    for (const p of patchers.splice(0)) p.deactivate();
+    document.body.innerHTML = "";
+  });
+  it("点击条目「译」按钮：专名节点不送译，简介句子正常送译", async () => {
+    const calls: string[] = [];
+    const coordinator = {
+      translateWithOutcome: async (t: string) => {
+        calls.push(t);
+        return { text: `译:${t}`, outcome: "translated" };
+      },
+    } as unknown as TranslationCoordinator;
+    const item = document.createElement("div");
+    item.className = "community-item";
+    const name = document.createElement("div");
+    name.textContent = "Dataview"; // 专名形态
+    const author = document.createElement("div");
+    author.textContent = "Michael Brenan"; // 专名形态
+    const desc = document.createElement("div");
+    desc.textContent = "A powerful query engine for your notes"; // 自然语言
+    item.append(name, author, desc);
+    document.body.appendChild(item);
+    const patcher = new MarketplacePatcher(
+      coordinator,
+      (t) => t,
+      () => {},
+      undefined,
+      undefined,
+      () => {}
+    );
+    patchers.push(patcher);
+    patcher.activate();
+    await tick();
+    const btn = item.querySelector(".uut-mkt-btn") as HTMLButtonElement;
+    expect(btn).toBeTruthy();
+    btn.click();
+    await tick();
+    expect(calls).toContain("A powerful query engine for your notes");
+    expect(calls).not.toContain("Dataview");
+    expect(calls).not.toContain("Michael Brenan");
+  });
+});
+
+describe("1.5 F3：详情重开自动缓存回写（cache-only 零 API）", () => {
+  const patchers: MarketplacePatcher[] = [];
+  afterEach(() => {
+    for (const p of patchers.splice(0)) p.deactivate();
+    document.body.innerHTML = "";
+  });
+  it("injectDetailButton 注入时自动跑 cache-only pass：命中译文回写 DOM", async () => {
+    const seenOpts: Array<{ cacheOnly?: boolean; bypassNegativeCache?: boolean }> = [];
+    const coordinator = {
+      translateWithOutcome: async (t: string, _c: unknown, opts?: { cacheOnly?: boolean }) => {
+        seenOpts.push(opts ?? {});
+        if (t === "Previously translated paragraph") {
+          return { text: "之前已翻译的段落", outcome: "cache" };
+        }
+        return { text: t, outcome: "cache-miss" };
+      },
+    } as unknown as TranslationCoordinator;
+    const { modal } = makeModal("<p>Previously translated paragraph</p><p>Fresh untranslated paragraph</p>");
+    const patcher = new MarketplacePatcher(
+      coordinator,
+      (t) => t,
+      () => {},
+      undefined,
+      undefined,
+      () => {}
+    );
+    patchers.push(patcher);
+    patcher.activate();
+    await tick();
+    await tick();
+    // 已译段落自动回写为缓存译文；未译段落保持原文；全部调用均为 cacheOnly（零 API）
+    expect(modal.querySelector("p")?.textContent).toBe("之前已翻译的段落");
+    expect(modal.querySelectorAll("p")[1].textContent).toBe("Fresh untranslated paragraph");
+    expect(seenOpts.length).toBeGreaterThan(0);
+    expect(seenOpts.every((o) => o.cacheOnly === true)).toBe(true);
   });
 });

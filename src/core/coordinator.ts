@@ -18,6 +18,8 @@ export type TranslateOutcome =
   | "budget"
   | "circuit"
   | "negative-cache"
+  /** 1.5（F3）：cacheOnly 模式下未命中缓存——不发 API，原文返回（弹窗重开自动回写专用） */
+  | "cache-miss"
   | "failed";
 
 export interface TranslateResult {
@@ -48,6 +50,8 @@ export interface CoordinatorOptions {
   onAuthFailure?: () => void;
   /** 缓存总开关（4.4 cacheEnabled，v1.1.5 接线——此前为死配置）；缺省视为开启 */
   isCacheEnabled?: () => boolean;
+  /** 1.5（B3）：宽松缓存键开关——开时键退化为 sha256(原文+目标语言)，跨引擎/模型复用译文 */
+  isLooseCacheKey?: () => boolean;
   /** v1.1.8：月度预算超限提示回调（4.5 承诺的"超限提示"此前未实现；一次会话只提示一次） */
   onBudgetExceeded?: () => void;
 }
@@ -84,11 +88,13 @@ export class TranslationCoordinator {
    * 不再把失败静默显示成成功（用户实测"点击无反应"的根因）
    * @param opts.bypassNegativeCache 手动点击 = 显式重试意图，跳过 5 分钟负缓存；
    *   熔断与预算不受影响（钱包保护不动）
+   * @param opts.cacheOnly 1.5（F3）：只查 过滤→术语表→缓存，未命中直接原文返回（outcome
+   *   "cache-miss"），不发任何 API——弹窗重开时自动回写已译内容用，零 token 成本
    */
   async translateWithOutcome(
     text: string,
     ctx: TranslateContext,
-    opts?: { bypassNegativeCache?: boolean }
+    opts?: { bypassNegativeCache?: boolean; cacheOnly?: boolean }
   ): Promise<TranslateResult> {
     // 1. 过滤链（4.2.1）
     if (!this.filter.shouldTranslate(text)) return { text, outcome: "filtered" };
@@ -99,12 +105,17 @@ export class TranslationCoordinator {
     const provider = this.getProvider();
     if (!provider) return { text, outcome: "no-provider" };
     // 4. 缓存（键含 providerId + targetLang + model 维度，4.2.3；v1.1.5 cacheEnabled 接线；
-    //    v1.2 B1 来源版本维度退役——键已锚定原文，升级后未变文本继续命中）
+    //    v1.2 B1 来源版本维度退役——键已锚定原文，升级后未变文本继续命中；
+    //    1.5 B3 宽松键——isLooseCacheKey 开启时去引擎/模型维度，跨模型复用译文）
     const cacheOn = this.options.isCacheEnabled?.() ?? true;
     const model = this.options.getModelId?.() ?? "";
-    const key = CacheManager.makeKey(text, provider.id, this.options.targetLang, model);
+    const key = this.options.isLooseCacheKey?.()
+      ? CacheManager.makeLooseKey(text, this.options.targetLang)
+      : CacheManager.makeKey(text, provider.id, this.options.targetLang, model);
     const hit = cacheOn ? this.cache.get(key) : null;
     if (hit) return { text: hit.tgt, outcome: "cache" };
+    // F3：cache-only 到此为止——未命中不发 API（自动回写通道零成本约束）
+    if (opts?.cacheOnly) return { text, outcome: "cache-miss" };
     // 4.5 月度预算熔断：超限暂停送译、回退原文（v1.1.8：每会话提示一次——此前纯静默）
     if (
       this.options.usageTracker &&

@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { CACHE_SCHEMA_VERSION, CacheEntry, CacheFile, TextFileIO } from "../types";
+import { CACHE_SCHEMA_VERSION, CacheEntry, CacheFile, SyncFileIO, TextFileIO } from "../types";
 
 export interface CacheStats {
   size: number;
@@ -40,6 +40,15 @@ export class CacheManager {
   static makeKey(src: string, providerId: string, targetLang: string, model: string): string {
     return createHash("sha256")
       .update(src + providerId + targetLang + model)
+      .digest("hex")
+      .slice(0, 16);
+  }
+
+  /** 1.5（B3）：宽松键——仅原文+目标语言维度，跨引擎/模型复用译文（设置 looseCacheKey 开启时使用）。
+   *  "loose:" 前缀与严格键空间隔离（严格键 = 原文+引擎+语言+模型 直连哈希，无前缀） */
+  static makeLooseKey(src: string, targetLang: string): string {
+    return createHash("sha256")
+      .update("loose:" + src + targetLang)
       .digest("hex")
       .slice(0, 16);
   }
@@ -188,6 +197,36 @@ export class CacheManager {
         // .bak 失败跳过：主文件写入照常
       }
     }
+    await this.io.write(this.filePath, JSON.stringify(this.serialize()));
+    this.dirtyCount = 0;
+    this.accessDirty = false;
+    this.lastFlushAt = this.now();
+  }
+
+  /**
+   * 1.5（F1）：卸载同步落盘——writeSync(tmp) + renameSync 原子替换。
+   * 真机实证（文档/1022-1427 E4/E5）：onunload 的 void flush() 在强杀与优雅关闭下都来不及完成，
+   * 翻译成功但未落盘的译文即丢失；同步路径是唯一可靠兜底。rename 原子性同时根治
+   * 覆盖写一半崩溃的文件损坏窗口（写坏的只是 tmp，主文件始终是上一完整版本）。
+   * 不做 .bak 复制（耗时；rename 已保证主文件不损坏）。
+   * @returns true=同步落盘成功；false=失败（调用方回落异步 flush）
+   */
+  flushSync(sync: SyncFileIO): boolean {
+    try {
+      const tmp = `${this.filePath}.tmp`;
+      sync.writeSync(tmp, JSON.stringify(this.serialize()));
+      sync.renameSync(tmp, this.filePath);
+      this.dirtyCount = 0;
+      this.accessDirty = false;
+      this.lastFlushAt = this.now();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** flush/flushSync 共享的序列化视图：排序（最近访问优先）→ 条数上限 → 字节硬顶 */
+  private serialize(): CacheFile {
     const sorted = [...this.mem.entries()]
       // B2：磁盘保留优先级按最近访问时间（缺省回落 updatedAt）
       .sort(([, a], [, b]) => (b.lastAccessAt ?? b.updatedAt) - (a.lastAccessAt ?? a.updatedAt))
@@ -200,15 +239,7 @@ export class CacheManager {
       if (bytes > DISK_MAX_BYTES) break;
       kept[key] = e;
     }
-    const file: CacheFile = {
-      schemaVersion: CACHE_SCHEMA_VERSION,
-      entries: kept,
-    };
-    // B4：紧凑 JSON（原 2 空格缩进近乎翻倍文件体积；可读性要求只针对构建产物代码）
-    await this.io.write(this.filePath, JSON.stringify(file));
-    this.dirtyCount = 0;
-    this.accessDirty = false;
-    this.lastFlushAt = this.now();
+    return { schemaVersion: CACHE_SCHEMA_VERSION, entries: kept };
   }
 
   stats(): CacheStats {

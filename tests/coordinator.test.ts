@@ -377,3 +377,45 @@ describe("translateWithOutcome 结果分类（v1.1.8：手动通道区分「无�
     expect(cache.get(key)).toBeNull();
   });
 });
+
+describe("1.5 F3：cacheOnly 模式（弹窗重开自动回写专用）", () => {
+  it("未命中返回原文 + outcome cache-miss，不调 Provider", async () => {
+    const { coordinator, provider } = setup();
+    const r = await coordinator.translateWithOutcome("brand new text", CTX, { cacheOnly: true });
+    expect(r.outcome).toBe("cache-miss");
+    expect(r.text).toBe("brand new text");
+    expect((provider as StubProvider).calls).toHaveLength(0);
+  });
+  it("命中返回缓存译文（先正常翻译入缓存，再 cacheOnly 同文本）", async () => {
+    const { coordinator } = setup();
+    await coordinator.translateWithOutcome("cached text", CTX);
+    const r = await coordinator.translateWithOutcome("cached text", CTX, { cacheOnly: true });
+    expect(r.outcome).toBe("cache");
+    expect(r.text).toBe("译:cached text");
+  });
+});
+
+describe("1.5 B3：宽松缓存键（跨模型/引擎复用译文）", () => {
+  it("isLooseCacheKey 开启：换模型后同文本命中缓存，不再调 Provider", async () => {
+    const provider = new StubProvider();
+    let model = "model-a";
+    const cache = new CacheManager(new MemoryIO(), "cache.json");
+    const coordinator = new TranslationCoordinator(
+      new FilterEngine(),
+      cache,
+      () => provider,
+      {
+        targetLang: "zh-CN",
+        glossary: {},
+        getModelId: () => model,
+        isLooseCacheKey: () => true,
+      }
+    );
+    const r1 = await coordinator.translateWithOutcome("shared text", CTX);
+    expect(r1.outcome).toBe("translated");
+    model = "model-b"; // 换模型：严格键下必 miss，宽松键下命中
+    const r2 = await coordinator.translateWithOutcome("shared text", CTX);
+    expect(r2.outcome).toBe("cache");
+    expect(provider.calls.length).toBe(1); // 只调了一次 API
+  });
+});

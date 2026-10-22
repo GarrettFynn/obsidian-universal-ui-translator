@@ -317,3 +317,45 @@ describe("CacheManager", () => {
     expect(cm.get("k")).toBeNull();
   });
 });
+
+describe("1.5 F1：flushSync 卸载同步落盘", () => {
+  it("writeSync(tmp)+renameSync 原子序；成功后脏计数清零、lastFlushAt 更新", () => {
+    const io = new MemoryIO();
+    const cm = new CacheManager(io, "cache.json", 100);
+    cm.set("k1", { src: "hello", tgt: "你好", provider: "stub", lang: "zh-CN", hits: 0, updatedAt: 1 });
+    const ops: string[] = [];
+    const sync = {
+      writeSync: (p: string, d: string) => {
+        ops.push(`write:${p}`);
+        io.files.set(p, d);
+      },
+      renameSync: (f: string, t: string) => {
+        ops.push(`rename:${f}->${t}`);
+        io.files.set(t, io.files.get(f) ?? "");
+        io.files.delete(f);
+      },
+    };
+    expect(cm.flushSync(sync)).toBe(true);
+    expect(ops[0]).toBe("write:cache.json.tmp");
+    expect(ops[1]).toBe("rename:cache.json.tmp->cache.json");
+    expect(cm.pendingWrites).toBe(0);
+    expect(cm.stats().lastFlushAt).not.toBeNull();
+    expect(JSON.parse(io.files.get("cache.json") ?? "{}").entries).toHaveProperty("k1");
+  });
+  it("writeSync 抛异常返回 false 不抛出（调用方回落异步 flush）；脏计数保留", () => {
+    const cm = new CacheManager(new MemoryIO(), "cache.json", 100);
+    cm.set("k1", { src: "hello", tgt: "你好", provider: "stub", lang: "zh-CN", hits: 0, updatedAt: 1 });
+    const boom = { writeSync: () => { throw new Error("disk full"); }, renameSync: () => undefined };
+    expect(cm.flushSync(boom)).toBe(false);
+    expect(cm.pendingWrites).toBe(1);
+  });
+});
+
+describe("1.5 B3：makeLooseKey 宽松键", () => {
+  it("原文+语言决定键；与严格键空间不冲突", () => {
+    const loose = CacheManager.makeLooseKey("hello", "zh-CN");
+    expect(loose).toBe(CacheManager.makeLooseKey("hello", "zh-CN"));
+    expect(loose).not.toBe(CacheManager.makeLooseKey("hello", "ja"));
+    expect(loose).not.toBe(CacheManager.makeKey("hello", "", "zh-CN", ""));
+  });
+});

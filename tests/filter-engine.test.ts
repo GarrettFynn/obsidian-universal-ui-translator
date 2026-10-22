@@ -143,3 +143,33 @@ describe("FilterEngine 占位符保护（规则 6）", () => {
     expect(FilterEngine.placeholdersIntact("{0} items", "{0} 个项目")).toBe(true);
   });
 });
+
+describe("1.5 G1：技术标识符形态规则（整串 kebab/snake 不译）", () => {
+  const f = new FilterEngine();
+  it("插件 id / kebab-case / snake_case 拒绝送译", () => {
+    expect(f.shouldTranslate("obsidian-git")).toBe(false);
+    expect(f.shouldTranslate("universal-ui-translator")).toBe(false);
+    expect(f.shouldTranslate("config_setting")).toBe(false);
+  });
+  it("自然语言文案不受影响", () => {
+    expect(f.shouldTranslate("Settings")).toBe(true);
+    expect(f.shouldTranslate("Open in new tab")).toBe(true);
+    expect(f.shouldTranslate("New note")).toBe(true);
+    expect(f.shouldTranslate("Drag-and-Drop hints")).toBe(true); // 首字母大写：不匹配全小写规则
+  });
+});
+
+describe("1.5 G2：isProperNounLike 专名形态判定", () => {
+  it("1~4 个首字母大写词判为专名（插件显示名/作者名）", () => {
+    expect(FilterEngine.isProperNounLike("Dataview")).toBe(true);
+    expect(FilterEngine.isProperNounLike("Obsidian Git")).toBe(true);
+    expect(FilterEngine.isProperNounLike("Michael Brenan")).toBe(true);
+    expect(FilterEngine.isProperNounLike("TL Gen Three")).toBe(true);
+  });
+  it("自然语言句子/含小写词/带标点句子的文本不判为专名", () => {
+    expect(FilterEngine.isProperNounLike("New note")).toBe(false); // note 小写
+    expect(FilterEngine.isProperNounLike("A powerful note manager")).toBe(false);
+    expect(FilterEngine.isProperNounLike("Quickly capture ideas, then organize them.")).toBe(false);
+    expect(FilterEngine.isProperNounLike("Five word proper noun phrase here")).toBe(false); // 5 词超界
+  });
+});
