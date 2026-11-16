@@ -20,6 +20,9 @@ export type TranslateOutcome =
   | "negative-cache"
   /** 1.5（F3）：cacheOnly 模式下未命中缓存——不发 API，原文返回（弹窗重开自动回写专用） */
   | "cache-miss"
+  /** 1.6（E1）：dom 兜底通道高峰降级——效率档 + 队列超阈值时不发 API 原文返回
+   *  （不写缓存不进负缓存，队列深度回落即恢复；仅 pluginId="unknown" 触发） */
+  | "throttled"
   | "failed";
 
 export interface TranslateResult {
@@ -52,13 +55,20 @@ export interface CoordinatorOptions {
   isCacheEnabled?: () => boolean;
   /** 1.5（B3）：宽松缓存键开关——开时键退化为 sha256(原文+目标语言)，跨引擎/模型复用译文 */
   isLooseCacheKey?: () => boolean;
+  /** 1.6（E1）：dom 兜底通道高峰降级开关——返回 true 时 source=dom + pluginId=unknown 的
+   *  请求不发 API（outcome "throttled"）。装配层实现：效率档 && batcher.pendingCount() > 30
+   *  （懒闭包实时读 settings；batcher 须经 this 调用期取，refreshRuntime 会重建实例） */
+  shouldThrottleDom?: () => boolean;
+  /** 1.6（F）：成本审计日志开关——开启时每条送 API 的请求打 console 明细（默认关） */
+  isCostAuditLog?: () => boolean;
   /** v1.1.8：月度预算超限提示回调（4.5 承诺的"超限提示"此前未实现；一次会话只提示一次） */
   onBudgetExceeded?: () => void;
 }
 
 /**
  * 翻译请求统一入口（设计文档 3.2 数据流、3.3 模块清单）
- * 编排：FilterEngine → Glossary → CacheManager → Provider → 占位符校验 → 写缓存
+ * 编排：FilterEngine → Glossary → maskAll（1.6 C1 显式占位符+数字单趟联合 token 化）→
+ *       CacheManager（键与条目均锚定 masked）→ Provider → 还原校验（1.6 C2）→ 写缓存
  * 任何环节失败回退原文，绝不向拦截层抛异常（优雅降级原则）
  */
 export class TranslationCoordinator {
@@ -104,18 +114,37 @@ export class TranslationCoordinator {
     // 3. Provider 未配置：回退原文（4.4.2 未配置行为）
     const provider = this.getProvider();
     if (!provider) return { text, outcome: "no-provider" };
-    // 4. 缓存（键含 providerId + targetLang + model 维度，4.2.3；v1.1.5 cacheEnabled 接线；
-    //    v1.2 B1 来源版本维度退役——键已锚定原文，升级后未变文本继续命中；
-    //    1.5 B3 宽松键——isLooseCacheKey 开启时去引擎/模型维度，跨模型复用译文）
+    // 4. 1.6（C1/C3）：单趟联合 mask（显式占位符 + 裸数字统一编号，filter-engine.maskAll）——
+    //    缓存键、负缓存与缓存条目均锚定 masked：动态数字模板（"New preset: 540/1234" 型）
+    //    共享一个键，命中时按当前原文 spans 还原各自正确数字（1234 张图只付一次钱）
+    const { masked, spans, numericValues } = FilterEngine.maskAll(text);
+    // 缓存（键含 providerId + targetLang + model 维度，4.2.3；v1.1.5 cacheEnabled 接线；
+    // v1.2 B1 来源版本维度退役；1.5 B3 宽松键——1.6 起同样吃 masked 输入，跨模型复用模板译文）
     const cacheOn = this.options.isCacheEnabled?.() ?? true;
     const model = this.options.getModelId?.() ?? "";
     const key = this.options.isLooseCacheKey?.()
-      ? CacheManager.makeLooseKey(text, this.options.targetLang)
-      : CacheManager.makeKey(text, provider.id, this.options.targetLang, model);
+      ? CacheManager.makeLooseKey(masked, this.options.targetLang)
+      : CacheManager.makeKey(masked, provider.id, this.options.targetLang, model);
     const hit = cacheOn ? this.cache.get(key) : null;
-    if (hit) return { text: hit.tgt, outcome: "cache" };
+    if (hit) {
+      // 1.6（C2）：缓存条目存 masked 态译文——按当前原文 spans 还原；违例（模型吞/幻觉
+      // token 的残缺条目）视同未命中继续走 API（cacheOnly 请求在下面被拦成 cache-miss）
+      const cached = FilterEngine.validateAndRestore(hit.tgt, spans, numericValues);
+      if (cached !== null) return { text: cached, outcome: "cache" };
+    }
     // F3：cache-only 到此为止——未命中不发 API（自动回写通道零成本约束）
     if (opts?.cacheOnly) return { text, outcome: "cache-miss" };
+    // 1.6（E1）：dom 兜底通道高峰降级——效率档 + 队列超阈值时不发 API（预算检查之前，
+    // 高峰期连预算统计口径的请求都不发）。pluginId === "unknown" 甄别必须保留：市场手动趟
+    // 与 cacheOnlyPass 同样传 source:"dom"（pluginId:"marketplace"），漏甄别会误伤主动通道；
+    // cacheOnly 请求已在上一行返回，永不触达本分支。不写缓存不进负缓存——队列深度回落即恢复
+    if (
+      ctx.source === "dom" &&
+      ctx.pluginId === "unknown" &&
+      this.options.shouldThrottleDom?.()
+    ) {
+      return { text, outcome: "throttled" };
+    }
     // 4.5 月度预算熔断：超限暂停送译、回退原文（v1.1.8：每会话提示一次——此前纯静默）
     if (
       this.options.usageTracker &&
@@ -127,32 +156,48 @@ export class TranslationCoordinator {
       }
       return { text, outcome: "budget" };
     }
-    // 5. 熔断与负缓存（4.2.2）
+    // 5. 熔断与负缓存（4.2.2；1.6（C3）负缓存键同步 masked——失败路径同模板只失败一次）
     if (this.isCircuitOpen()) return { text, outcome: "circuit" };
     if (!opts?.bypassNegativeCache) {
-      const neg = this.negativeCache.get(text);
+      const neg = this.negativeCache.get(masked);
       if (neg !== undefined && this.now() - neg < NEGATIVE_TTL_MS) {
         return { text, outcome: "negative-cache" };
       }
     }
-    // 6. 调 Provider：占位符 token 化保护 → 翻译 → 还原 → 校验闭环（4.2.1 规则 6）
+    // 6. 调 Provider：1.6（C3）masked 直接送译——显式占位符与数字已在 maskAll 统一 token 化
+    //    （protectPlaceholders 退役；批量协议行内不再有裸数字，杜绝模型改写行内数字错位）
     try {
-      const { masked, tokens } = FilterEngine.protectPlaceholders(text);
       const context = `${ctx.source}:${ctx.pluginId}`; // D7：仅 prompt 参考，不进缓存键
+      // 1.6（F）：成本审计日志（默认关）——console.log 级别（devtools 默认可见），纯本地
+      if (this.options.isCostAuditLog?.()) {
+        console.log("[UUT]", ctx.source, ctx.pluginId, masked.length, masked.slice(0, 60));
+      }
       const raw = this.options.translateVia
         ? await this.options.translateVia(masked, context)
         : await provider.translate(masked, { context });
-      const restored = FilterEngine.restorePlaceholders(raw.trim(), tokens);
+      // 1.6（C2）：还原校验（token 编号集合一致 + 数字值包含安全网）——违例 = 模型吞/幻觉
+      // token：丢弃译文、回退原文、不写缓存（残缺译文落盘会永久化）。
+      // 复审 #1：违例进 noteFailure（负缓存按 masked 键 5 分钟抑制同模板重付 + 计入熔断——
+      // 持续产残缺译文属质量故障，参数型引擎无 prompt 保护时这是唯一钱包护栏，设计 §8"负缓存兜底"）
+      const restored = FilterEngine.validateAndRestore(raw.trim(), spans, numericValues);
+      if (restored === null) {
+        this.noteFailure(masked);
+        return { text, outcome: "failed", error: t("common.placeholder-rewritten") };
+      }
       // 按送译字符计量（4.5 用量统计；异步落盘失败不影响主流程）；v1.1.9：译文长度作输出字符
+      // （1.6 起送译的正是 masked，输入计量口径随之更真实）
       void this.options.usageTracker?.record(masked.length, restored.length);
+      // 显式占位符既有校验并行保留（1.6 C2：与还原校验叠加双保险；违例同样进 noteFailure）
       if (!FilterEngine.placeholdersIntact(text, restored)) {
         // 占位符被改写：丢弃译文、回退原文、不写缓存
+        this.noteFailure(masked);
         return { text, outcome: "failed", error: t("common.placeholder-rewritten") };
       }
       if (cacheOn) {
         this.cache.set(key, {
           src: text,
-          tgt: restored,
+          // 1.6（C3）：tgt 存 masked 态译文（未还原）——同模板不同数字命中后按当前 spans 还原
+          tgt: raw.trim(),
           provider: provider.id,
           lang: this.options.targetLang,
           // v1.1.9：缓存键已含模型维度，条目冗余一份供「清理失效条目」按模型判定
@@ -173,7 +218,7 @@ export class TranslationCoordinator {
       if (this.consecutiveFailures < 3) {
         console.warn(t("common.log-translate-failed", { n: String(e).slice(0, 160) }));
       }
-      this.noteFailure(text, e);
+      this.noteFailure(masked, e); // 1.6（C3）：负缓存键同步 masked
       return { text, outcome: "failed", error: String(e).slice(0, 160) };
     }
   }

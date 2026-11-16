@@ -38,6 +38,10 @@ export interface TokenUsage {
 export interface PluginSettings {
   enabled: boolean;
   targetLang: string;
+  /** 1.6（M1）：翻译模式预设——quality 效果优先（尽量翻译一切可见文本，含 Notice 弹窗）；
+   *  efficiency 效率优先（默认：跳过 Notice 等短生命周期提示 + dom 高峰降级）。
+   *  数字归一化缓存两档共享（模板只付一次钱）。模式只映射这两个内部开关，不暴露独立布尔 */
+  mode: "quality" | "efficiency";
   displayMode: DisplayMode;
   bilingualFormat: BilingualFormat;
   activeProvider: string;
@@ -82,11 +86,16 @@ export interface PluginSettings {
    *  命令名等 onload 注册期文案重启后生效（设计 4.3 已知边界） */
   uiLanguage: "auto" | "zh-CN" | "en";
   debugMode: boolean;
+  /** 1.6（F）：成本审计日志——开启后每条送译请求在 Console 打印明细（文本截断 + 来源 +
+   *  字符数），用户可自查"谁在烧 token"、报 issue 有据。纯本地行为，零额外 API 消耗 */
+  costAuditLog: boolean;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
   enabled: true,
   targetLang: "zh-CN",
+  // 1.6（M1）：默认效率优先（用户反馈拍板：Notice 类批量通知翻译价值低且必耗 token）
+  mode: "efficiency",
   displayMode: "replace",
   bilingualFormat: "{t} ({o})",
   activeProvider: "openai",
@@ -112,6 +121,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   usageInStatusBar: true,
   uiLanguage: "auto",
   debugMode: false,
+  costAuditLog: false,
 };
 
 /** 缓存条目与磁盘文件结构（设计文档 4.2.3） */

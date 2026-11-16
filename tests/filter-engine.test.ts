@@ -173,3 +173,97 @@ describe("1.5 G2：isProperNounLike 专名形态判定", () => {
     expect(FilterEngine.isProperNounLike("Five word proper noun phrase here")).toBe(false); // 5 词超界
   });
 });
+
+describe("1.6 C1：maskAll 单趟联合提取（显式占位符 + 裸数字统一编号）", () => {
+  it("占位符与数字混排单趟无冲突，往返还原回原文（审查实测串行组合会丢 %s）", () => {
+    const original = "Save 25% with %s and {0} of {{user2}} items";
+    const { masked, spans, numericValues } = FilterEngine.maskAll(original);
+    expect(masked).toBe(
+      "Save __UUTPH0__ with __UUTPH1__ and __UUTPH2__ of __UUTPH3__ items"
+    );
+    expect(spans).toEqual(["25%", "%s", "{0}", "{{user2}}"]);
+    expect(numericValues).toEqual(["25%"]); // 只有数字分支进还原校验
+    expect(FilterEngine.restoreSpans(masked, spans)).toBe(original);
+  });
+
+  it("数字形态全覆盖：小数/千分位/百分比/版本/日期逐位拆分", () => {
+    const { masked, spans, numericValues } = FilterEngine.maskAll(
+      "v1.5, 1,234 users, 85%, 2024-01-15"
+    );
+    expect(spans).toEqual(["1.5", "1,234", "85%", "2024", "01", "15"]);
+    expect(numericValues).toEqual(spans);
+    expect(masked).toBe(
+      "v__UUTPH0__, __UUTPH1__ users, __UUTPH2__, __UUTPH3__-__UUTPH4__-__UUTPH5__"
+    );
+    expect(FilterEngine.restoreSpans(masked, spans)).toBe("v1.5, 1,234 users, 85%, 2024-01-15");
+  });
+
+  it("数字后紧跟字母不 mask（1st / 10K 保词形完整；B2B 前后皆字母同样不 mask）", () => {
+    expect(FilterEngine.maskAll("1st place").masked).toBe("1st place");
+    expect(FilterEngine.maskAll("10K users").masked).toBe("10K users");
+    expect(FilterEngine.maskAll("B2B").masked).toBe("B2B");
+  });
+
+  it("数字前为字母不拦（Windows 10 → 10 被 mask，v1.5 → 1.5 被 mask）", () => {
+    expect(FilterEngine.maskAll("Windows 10").masked).toBe("Windows __UUTPH0__");
+    expect(FilterEngine.maskAll("v1.5").masked).toBe("v__UUTPH0__");
+  });
+
+  it("同值多数字各自独立 token，往返一致", () => {
+    const { masked, spans } = FilterEngine.maskAll("1 of 1");
+    expect(masked).toBe("__UUTPH0__ of __UUTPH1__");
+    expect(spans).toEqual(["1", "1"]);
+    expect(FilterEngine.restoreSpans(masked, spans)).toBe("1 of 1");
+  });
+
+  it("尾随数字仍 mask（user2 → user__UUTPH0__，还原精确）", () => {
+    const { masked, spans } = FilterEngine.maskAll("user2");
+    expect(masked).toBe("user__UUTPH0__");
+    expect(FilterEngine.restoreSpans(masked, spans)).toBe("user2");
+  });
+
+  it("纯文本无匹配：masked === 原文、spans 空（1.5 及此前行为完全不变）", () => {
+    const { masked, spans, numericValues } = FilterEngine.maskAll("Open Settings");
+    expect(masked).toBe("Open Settings");
+    expect(spans).toEqual([]);
+    expect(numericValues).toEqual([]);
+  });
+});
+
+describe("1.6 C2：validateAndRestore 还原校验", () => {
+  it("完整 token 译文按 spans 还原成功", () => {
+    const m = FilterEngine.maskAll("New preset: 540/1234");
+    expect(
+      FilterEngine.validateAndRestore("新预设：__UUTPH0__/__UUTPH1__", m.spans, m.numericValues)
+    ).toBe("新预设：540/1234");
+  });
+
+  it("吞 token（少）→ null", () => {
+    const m = FilterEngine.maskAll("Page 5 of 10");
+    expect(
+      FilterEngine.validateAndRestore("第 __UUTPH0__ 页", m.spans, m.numericValues)
+    ).toBeNull();
+  });
+
+  it("幻觉 token（多）→ null", () => {
+    const m = FilterEngine.maskAll("Page 5 of 10");
+    expect(
+      FilterEngine.validateAndRestore(
+        "__UUTPH0__ of __UUTPH1__ __UUTPH5__",
+        m.spans,
+        m.numericValues
+      )
+    ).toBeNull();
+  });
+
+  it("模型把首见数字值直接译出（token 全丢）→ null——跨缓存串数字的根因场景", () => {
+    const m = FilterEngine.maskAll("New preset: 540/1234");
+    expect(
+      FilterEngine.validateAndRestore("新预设：540/1234", m.spans, m.numericValues)
+    ).toBeNull();
+  });
+
+  it("无 token 文本恒过（masked === 原文路径零影响）", () => {
+    expect(FilterEngine.validateAndRestore("打开设置", [], [])).toBe("打开设置");
+  });
+});

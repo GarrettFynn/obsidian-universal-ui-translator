@@ -6,6 +6,7 @@ import { TranslationCoordinator } from "../../src/core/coordinator";
 interface CoordStub {
   calls: string[];
   translate: (t: string) => Promise<string>;
+  translateWithOutcome: (t: string) => Promise<{ text: string; outcome: string }>;
 }
 
 function stubCoordinator(): TranslationCoordinator {
@@ -16,8 +17,13 @@ function stubCoordinator(): TranslationCoordinator {
       calls.push(t);
       return `译:${t}`;
     },
+    // 1.6（E2）：processNode 改走 translateWithOutcome 取 outcome——stub 同步提供；
+    // 与 translate 共用 calls（processNode 只走本方法，单次计数口径不变）
+    translateWithOutcome: async (t: string) => {
+      calls.push(t);
+      return { text: `译:${t}`, outcome: "translated" };
+    },
   };
-  Object.assign(stub, {});
   return stub as unknown as TranslationCoordinator;
 }
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -71,7 +77,11 @@ describe("DOMPatcher 集成", () => {
   it("rescanAllText：已渲染未译节点重置记录后重新翻译（v1.1.0 配置热生效）", async () => {
     let broken = true;
     const coord = {
-      translate: async (t: string) => (broken ? t : `译:${t}`), // 失败时回退原文（与 coordinator 一致）
+      // 1.6（E2）：processNode 走 translateWithOutcome——broken 时回退原文（与 coordinator 一致）
+      translateWithOutcome: async (t: string) =>
+        broken
+          ? { text: t, outcome: "failed" as const }
+          : { text: `译:${t}`, outcome: "translated" as const },
     } as unknown as TranslationCoordinator;
     const p = new DOMPatcher(coord, format, () => false);
     patchers.push(p);
@@ -263,5 +273,98 @@ describe("DOMPatcher 集成", () => {
     await wait(300);
     expect((coord as unknown as CoordStub).calls.length).toBe(before); // 双语产物未重送
     expect(div.textContent).toBe("译:Plugin Desc (Plugin Desc)");
+  });
+});
+
+describe("1.6 A：Notice 通道条件跳过（效率档止损）", () => {
+  const patchers: DOMPatcher[] = [];
+  afterEach(() => {
+    for (const p of patchers.splice(0)) p.deactivate();
+    document.body.innerHTML = "";
+  });
+
+  it("skipNotice=true：.notice 文本不入译（零 token——用户反馈的 Notice 白耗场景）", async () => {
+    const coord = stubCoordinator();
+    const calls = (coord as unknown as { calls: string[] }).calls;
+    const p = new DOMPatcher(coord, format, () => false, () => {}, undefined, 3000, () => true);
+    patchers.push(p);
+    p.activate();
+    const notice = document.createElement("div");
+    notice.className = "notice";
+    notice.textContent = "New preset: 540/1234";
+    document.body.appendChild(notice);
+    await wait(300);
+    expect(notice.textContent).toBe("New preset: 540/1234"); // 原文保留
+    expect(calls).toHaveLength(0); // 未进翻译队列
+  });
+
+  it("skipNotice=false（效果优先缺省）：.notice 正常入队翻译", async () => {
+    const coord = stubCoordinator();
+    const calls = (coord as unknown as { calls: string[] }).calls;
+    const p = new DOMPatcher(coord, format, () => false, () => {}, undefined, 3000, () => false);
+    patchers.push(p);
+    p.activate();
+    const notice = document.createElement("div");
+    notice.className = "notice";
+    notice.textContent = "Open Settings";
+    document.body.appendChild(notice);
+    await wait(300);
+    expect(notice.textContent).toBe("译:Open Settings");
+    expect(calls).toEqual(["Open Settings"]);
+  });
+});
+
+describe("1.6 E2 复审补强：throttled 善后（回滚 + 限次重试防永久漏译）", () => {
+  const patchers: DOMPatcher[] = [];
+  afterEach(() => {
+    for (const p of patchers.splice(0)) p.deactivate();
+    document.body.innerHTML = "";
+  });
+
+  it("throttled 后 processed 已回滚，2s 后自动重试并回写译文（风暴过去队列回落）", async () => {
+    let throttling = true;
+    const calls: string[] = [];
+    const coord = {
+      translateWithOutcome: async (t: string) => {
+        calls.push(t);
+        // 效率档高峰：首轮 throttled；2s 重试时风暴已过 → 正常译文
+        return throttling && calls.length === 1
+          ? { text: t, outcome: "throttled" as const }
+          : { text: `译:${t}`, outcome: "translated" as const };
+      },
+    } as unknown as TranslationCoordinator;
+    const p = new DOMPatcher(coord, format, () => false);
+    patchers.push(p);
+    p.activate();
+    const div = document.createElement("div");
+    div.textContent = "Storm Label";
+    document.body.appendChild(div);
+    await wait(300);
+    expect(div.textContent).toBe("Storm Label"); // 首轮被降级：原文保留
+    expect(calls).toEqual(["Storm Label"]);
+    throttling = false; // 队列深度回落
+    await wait(2600); // 2s 重试窗口
+    expect(div.textContent).toBe("译:Storm Label"); // 自动补译回写——无永久漏译
+  });
+
+  it("持续 throttled 至 15 次上限后停止重试（不无限循环）", async () => {
+    let outcomes = 0;
+    const coord = {
+      translateWithOutcome: async (t: string) => {
+        outcomes++;
+        return { text: t, outcome: "throttled" as const };
+      },
+    } as unknown as TranslationCoordinator;
+    const p = new DOMPatcher(coord, format, () => false, () => {}, undefined, 3000);
+    patchers.push(p);
+    p.activate();
+    const div = document.createElement("div");
+    div.textContent = "Always Throttled";
+    document.body.appendChild(div);
+    await wait(300);
+    const first = outcomes;
+    await wait(3600); // 越过 2~3 个重试窗口
+    expect(outcomes).toBeGreaterThan(first); // 重试在进行
+    expect(outcomes).toBeLessThanOrEqual(first + 3); // 但受 15 次总上限约束（本窗口仅少量新增）
   });
 });

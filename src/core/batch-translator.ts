@@ -42,6 +42,12 @@ export class BatchTranslator {
   private byText = new Map<string, PendingEntry[]>();
   private timer: number | null = null;
   private flushing = false;
+  /** 1.6.0（E1-b）：已取走结算中、尚未全部完成的条数（flush 取走 entries 时置位、
+   *  F3 逐批上报点同步递减、finally 归零）。原口径 queue.length 在 flush 后立即清零，
+   *  真机实测（1116-0836 复审）：dom 逐条异步预算检查把提交摊薄跨窗口，队列峰值
+   *  常规时序下爬不过 30，降级结构性不触发——计入在途后，批次结算期（API 慢时
+   *  可达数秒）队列深度持续 >30，触发面覆盖真实堆积场景（用户拍板 b） */
+  private inflight = 0;
   private statSubmitted = 0;
   private statCompleted = 0;
   private statFailed = 0;
@@ -80,6 +86,17 @@ export class BatchTranslator {
     };
   }
 
+  /**
+   * 1.6（E1）→ 1.6.0 收尾（b 拍板）：当前待结算条数 = 聚合窗口内 queue.length +
+   * 已取走在途未结算 inflight。dom 高峰降级（效率档）据此判定；计入在途使批次
+   * 结算期（API 慢/堆积时）队列深度持续高于阈值，触发面覆盖真实风暴（复审发现
+   * 原纯 queue 口径在逐条摊薄时序下结构性不触发，见验收报告 v1.1 §四-1）。
+   * 注意装配层 must 经 this 调用期取 batcher（refreshRuntime 会重建实例），不得构造期捕获。
+   */
+  pendingCount(): number {
+    return this.queue.length + this.inflight;
+  }
+
   private schedule(): void {
     if (this.timer) return;
     this.timer = window.setTimeout(() => {
@@ -97,6 +114,8 @@ export class BatchTranslator {
       const groups = this.byText;
       this.queue = [];
       this.byText = new Map();
+      // 1.6.0（E1-b）：取走即入在途（provider 缺失早退由 finally 归零兜底）
+      this.inflight = entries.length;
       const provider = this.getProvider();
       if (!provider || entries.length === 0) {
         for (const e of entries) e.reject(new Error(t("common.provider-not-configured")));
@@ -104,7 +123,8 @@ export class BatchTranslator {
       }
       const batches = this.splitBatches([...groups.keys()], provider);
       const concurrency = this.options.concurrency ?? 3;
-      // v1.3 F3：逐批上报剩余未结算条数——状态栏从"整轮 flush 冻结"变为逐批刷新
+      // v1.3 F3：逐批上报剩余未结算条数——状态栏从"整轮 flush 冻结"变为逐批刷新；
+      // 1.6.0（E1-b）：同步递减 inflight（pendingCount = queue + inflight 的在途半边）
       let remaining = entries.length;
       let idx = 0;
       const workers = Array.from(
@@ -114,6 +134,10 @@ export class BatchTranslator {
             const batch = batches[idx++];
             await this.runBatch(provider, batch, groups);
             remaining -= batch.length;
+            // 冷读守卫：任一 worker reject 会令 flush 提前进 finally（flushing=false、
+            // inflight=0），存活 worker 此后不得再回写陈旧计数（否则孤儿 inflight 可致
+            // 降级误锁）；flushing 标志在串行 flush 语义下即代际
+            if (this.flushing) this.inflight = remaining;
             this.options.onQueueChange?.(remaining);
           }
         }
@@ -121,6 +145,7 @@ export class BatchTranslator {
       await Promise.all(workers);
     } finally {
       this.flushing = false;
+      this.inflight = 0; // 1.6.0（E1-b）：任何出口（含早退/异常）归零在途计数
       this.options.onQueueChange?.(this.queue.length);
       // R-19 修复：在途 flush 期间到达的新提交重排窗口（否则定时器白触发后永久滞留、状态栏不归零）
       if (this.queue.length > 0) this.schedule();

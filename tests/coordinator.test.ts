@@ -132,8 +132,11 @@ describe("TranslationCoordinator 数据流（设计文档 3.2）", () => {
     stub.behavior = () => "个项目"; // 占位符 __UUTPH0__ 被 LLM 吃掉
     const { coordinator, cache } = setup({ provider: stub });
     expect(await coordinator.translate("{0} items", CTX)).toBe("{0} items");
-    const key = CacheManager.makeKey("{0} items", "stub", "zh-CN", "");
-    expect(cache.get(key)).toBeNull(); // 残缺译文不落盘
+    // 1.6 C3 双探测：键已 masked 化——原文键与 masked 键都必须为空（防单探测空转通过）
+    const keyOrig = CacheManager.makeKey("{0} items", "stub", "zh-CN", "");
+    expect(cache.get(keyOrig)).toBeNull(); // 残缺译文不落盘
+    const keyMasked = CacheManager.makeKey("__UUTPH0__ items", "stub", "zh-CN", "");
+    expect(cache.get(keyMasked)).toBeNull();
   });
 
   it("失败文本 5 分钟负缓存：期间同文本不再请求（设计文档测试用例 11）", async () => {
@@ -150,8 +153,10 @@ describe("TranslationCoordinator 数据流（设计文档 3.2）", () => {
     stub.failTimes = 100;
     let circuitNotices = 0;
     const { coordinator } = setup({ provider: stub, onCircuitOpen: () => circuitNotices++ });
-    for (let i = 0; i < 5; i++) {
-      await coordinator.translate(`Label Number ${i}`, CTX);
+    // 1.6 C3 负缓存按 masked 键：标签须互异且不含数字/占位符——同模板共享 masked 键会被负缓存拦截
+    const labels = ["Label Alpha", "Label Beta", "Label Gamma", "Label Delta", "Label Epsilon"];
+    for (const label of labels) {
+      await coordinator.translate(label, CTX);
     }
     expect(circuitNotices).toBe(1);
     expect(coordinator.isCircuitOpen()).toBe(true);
@@ -166,8 +171,12 @@ describe("TranslationCoordinator 数据流（设计文档 3.2）", () => {
     };
     let circuitNotices = 0;
     const { coordinator } = setup({ provider: stub, onCircuitOpen: () => circuitNotices++ });
-    for (let i = 0; i < 8; i++) {
-      await coordinator.translate(`Rate Label ${i}`, CTX);
+    // 1.6 C3 负缓存按 masked 键：标签互异且不含数字（同模板会被负缓存拦截、凑不满计数）
+    const rateLabels = ["Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta", "Eta", "Theta"].map(
+      (w) => `Rate Label ${w}`
+    );
+    for (const label of rateLabels) {
+      await coordinator.translate(label, CTX);
     }
     expect(circuitNotices).toBe(0);
     expect(coordinator.isCircuitOpen()).toBe(false);
@@ -178,15 +187,17 @@ describe("TranslationCoordinator 数据流（设计文档 3.2）", () => {
     const stub = new StubProvider();
     stub.failTimes = 100;
     const { coordinator } = setup({ provider: stub });
-    for (let i = 0; i < 5; i++) {
-      await coordinator.translate(`Label Number ${i}`, CTX);
+    // 1.6 C3 负缓存按 masked 键：标签互异且不含数字
+    const failLabels = ["Label Alpha", "Label Beta", "Label Gamma", "Label Delta", "Label Epsilon"];
+    for (const label of failLabels) {
+      await coordinator.translate(label, CTX);
     }
     expect(coordinator.isCircuitOpen()).toBe(true);
     stub.failTimes = 0; // 模拟用户修好配置
     coordinator.resetFailures();
     expect(coordinator.isCircuitOpen()).toBe(false);
     // 负缓存已清：此前失败的文本立即重译成功
-    expect(await coordinator.translate("Label Number 0", CTX)).toBe("译:Label Number 0");
+    expect(await coordinator.translate("Label Alpha", CTX)).toBe("译:Label Alpha");
   });
 
   it("Provider 未配置时回退原文（4.4.2 未配置行为）", async () => {
@@ -339,9 +350,9 @@ describe("translateWithOutcome 结果分类（v1.1.8：手动通道区分「无�
     const r2 = await coordinator.translateWithOutcome("Some Label", CTX);
     expect(r2.outcome).toBe("negative-cache");
     expect(stub.calls).toHaveLength(1);
-    // 再失败 4 次（累计连续 5 次）→ 熔断
-    for (let i = 0; i < 4; i++) {
-      await coordinator.translateWithOutcome(`Label Number ${i}`, CTX);
+    // 再失败 4 次（累计连续 5 次）→ 熔断（1.6 C3 负缓存按 masked 键：标签互异且不含数字）
+    for (const label of ["Label Alpha", "Label Beta", "Label Gamma", "Label Delta"]) {
+      await coordinator.translateWithOutcome(label, CTX);
     }
     const r3 = await coordinator.translateWithOutcome("Fresh Label", CTX);
     expect(r3.outcome).toBe("circuit");
@@ -373,8 +384,9 @@ describe("translateWithOutcome 结果分类（v1.1.8：手动通道区分「无�
     const r = await coordinator.translateWithOutcome("{0} items", CTX);
     expect(r.outcome).toBe("failed");
     expect(r.error).toBe("译文占位符被改写");
-    const key = CacheManager.makeKey("{0} items", "stub", "zh-CN", "");
-    expect(cache.get(key)).toBeNull();
+    // 1.6 C3 双探测：原文键与 masked 键都必须为空
+    expect(cache.get(CacheManager.makeKey("{0} items", "stub", "zh-CN", ""))).toBeNull();
+    expect(cache.get(CacheManager.makeKey("__UUTPH0__ items", "stub", "zh-CN", ""))).toBeNull();
   });
 });
 
@@ -417,5 +429,225 @@ describe("1.5 B3：宽松缓存键（跨模型/引擎复用译文）", () => {
     const r2 = await coordinator.translateWithOutcome("shared text", CTX);
     expect(r2.outcome).toBe("cache");
     expect(provider.calls.length).toBe(1); // 只调了一次 API
+  });
+});
+
+describe("1.6 C：数字归一化缓存（maskAll 单趟联合 token 化）", () => {
+  it("数字模板 masked 键：540/1234 与 541/1234 同键命中，各自还原正确数字", async () => {
+    const { coordinator, provider } = setup();
+    const r1 = await coordinator.translateWithOutcome("New preset: 540/1234", CTX);
+    expect(r1).toEqual({ text: "译:New preset: 540/1234", outcome: "translated" });
+    // 送译的正是 masked（数字已 token 化）
+    expect((provider as StubProvider).calls).toEqual(["New preset: __UUTPH0__/__UUTPH1__"]);
+    const r2 = await coordinator.translateWithOutcome("New preset: 541/1234", CTX);
+    expect(r2).toEqual({ text: "译:New preset: 541/1234", outcome: "cache" });
+    expect((provider as StubProvider).calls).toHaveLength(1); // 模板只付一次钱
+  });
+
+  it("数字 + 显式占位符混排：单趟联合 token 化，往返无损", async () => {
+    const { coordinator } = setup();
+    const r = await coordinator.translateWithOutcome("{0} of 5 items", CTX);
+    expect(r.text).toBe("译:{0} of 5 items");
+  });
+
+  it("模型吞数字 token：还原校验拦截，回退原文且 masked 键不写缓存", async () => {
+    const stub = new StubProvider();
+    stub.behavior = () => "第 __UUTPH0__ 页"; // 第二个 token 被吞
+    const { coordinator, cache } = setup({ provider: stub });
+    const r = await coordinator.translateWithOutcome("Page 5 of 10", CTX);
+    expect(r.outcome).toBe("failed");
+    expect(r.text).toBe("Page 5 of 10");
+    expect(cache.get(CacheManager.makeKey("Page __UUTPH0__ of __UUTPH1__", "stub", "zh-CN", ""))).toBeNull();
+  });
+
+  it("模型幻觉 token（多出 __UUTPH5__）：还原校验拦截", async () => {
+    const stub = new StubProvider();
+    stub.behavior = () => "译:__UUTPH0__ of __UUTPH1__ __UUTPH5__";
+    const { coordinator } = setup({ provider: stub });
+    const r = await coordinator.translateWithOutcome("Page 5 of 10", CTX);
+    expect(r.outcome).toBe("failed");
+  });
+
+  it("模型把数字直接译出（token 全丢）：还原校验拦截——同模板跨缓存串数字的根因场景", async () => {
+    const stub = new StubProvider();
+    stub.behavior = () => "译:新预设：540/1234"; // 首见值直出、无 token
+    const { coordinator } = setup({ provider: stub });
+    const r = await coordinator.translateWithOutcome("New preset: 540/1234", CTX);
+    expect(r.outcome).toBe("failed");
+    expect(r.text).toBe("New preset: 540/1234");
+  });
+
+  it("负缓存按 masked 键：同模板失败一次后变体不再请求", async () => {
+    const stub = new StubProvider();
+    stub.failTimes = 100;
+    const { coordinator } = setup({ provider: stub });
+    expect((await coordinator.translateWithOutcome("Page 5 of 10", CTX)).outcome).toBe("failed");
+    expect((await coordinator.translateWithOutcome("Page 6 of 10", CTX)).outcome).toBe(
+      "negative-cache"
+    );
+    expect(stub.calls).toHaveLength(1);
+  });
+
+  it("宽松键 × 含数字文本：跨模型命中 masked 键并按当前原文还原", async () => {
+    const provider = new StubProvider();
+    let model = "model-a";
+    const cache = new CacheManager(new MemoryIO(), "cache.json");
+    const coordinator = new TranslationCoordinator(
+      new FilterEngine(),
+      cache,
+      () => provider,
+      { targetLang: "zh-CN", glossary: {}, getModelId: () => model, isLooseCacheKey: () => true }
+    );
+    await coordinator.translateWithOutcome("Page 5 of 10", CTX);
+    model = "model-b"; // 换模型：宽松键下 masked 命中
+    const r = await coordinator.translateWithOutcome("Page 6 of 10", CTX);
+    expect(r.outcome).toBe("cache");
+    expect(r.text).toBe("译:Page 6 of 10"); // 数字按当前原文还原，不是首见的 5
+    expect(provider.calls.length).toBe(1);
+  });
+
+  it("无数字无占位符文本 masked === 原文：缓存行为与 1.5 完全一致", async () => {
+    const { coordinator, provider } = setup();
+    await coordinator.translateWithOutcome("Open Settings", CTX);
+    const r = await coordinator.translateWithOutcome("Open Settings", CTX);
+    expect(r.outcome).toBe("cache");
+    expect(r.text).toBe("译:Open Settings");
+    expect((provider as StubProvider).calls).toHaveLength(1);
+  });
+});
+
+describe("1.6 E：dom 高峰降级（效率档 + pluginId 甄别）", () => {
+  function setupT(shouldThrottleDom?: () => boolean) {
+    const provider = new StubProvider();
+    const coordinator = new TranslationCoordinator(
+      new FilterEngine(),
+      new CacheManager(new MemoryIO(), "cache.json"),
+      () => provider,
+      { targetLang: "zh-CN", glossary: {}, shouldThrottleDom }
+    );
+    return { coordinator, provider };
+  }
+  const DOM_UNKNOWN = { source: "dom" as const, pluginId: "unknown" };
+  const DOM_MKT = { source: "dom" as const, pluginId: "marketplace" };
+
+  it("效率档 + 超阈 + dom+unknown：throttled 不发 API；解除后同文本正常送译（不进负缓存）", async () => {
+    let throttle = true;
+    const { coordinator, provider } = setupT(() => throttle);
+    const r = await coordinator.translateWithOutcome("Some Label", DOM_UNKNOWN);
+    expect(r).toEqual({ text: "Some Label", outcome: "throttled" });
+    expect(provider.calls).toHaveLength(0);
+    throttle = false; // 队列深度回落
+    const r2 = await coordinator.translateWithOutcome("Some Label", DOM_UNKNOWN);
+    expect(r2.outcome).toBe("translated");
+    expect(provider.calls).toHaveLength(1);
+  });
+
+  it("pluginId=marketplace 不降级（市场手动「译」是主动通道，审查 H4 甄别）", async () => {
+    const { coordinator, provider } = setupT(() => true);
+    const r = await coordinator.translateWithOutcome("Some Label", DOM_MKT);
+    expect(r.outcome).toBe("translated");
+    expect(provider.calls).toHaveLength(1);
+  });
+
+  it("menu 等其他 source 不受影响", async () => {
+    const { coordinator, provider } = setupT(() => true);
+    const r = await coordinator.translateWithOutcome("Some Label", {
+      source: "menu",
+      pluginId: "x",
+    });
+    expect(r.outcome).toBe("translated");
+    expect(provider.calls).toHaveLength(1);
+  });
+
+  it("cacheOnly 请求永不返回 throttled（先于 throttle 分支返回 cache-miss）", async () => {
+    const { coordinator } = setupT(() => true);
+    const r = await coordinator.translateWithOutcome("Some Label", DOM_UNKNOWN, {
+      cacheOnly: true,
+    });
+    expect(r.outcome).toBe("cache-miss");
+  });
+
+  it("无 shouldThrottleDom（效果优先缺省）永不触发", async () => {
+    const { coordinator, provider } = setupT(undefined);
+    const r = await coordinator.translateWithOutcome("Some Label", DOM_UNKNOWN);
+    expect(r.outcome).toBe("translated");
+    expect(provider.calls).toHaveLength(1);
+  });
+});
+
+describe("1.6 F：成本审计日志", () => {
+  it("开启时送译打 console 明细（[UUT] 前缀 + source + 字符数）；关闭时静默", async () => {
+    const { vi } = await import("vitest");
+    const logs: unknown[][] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args);
+    });
+    try {
+      const provider = new StubProvider();
+      const mk = (audit: boolean) =>
+        new TranslationCoordinator(
+          new FilterEngine(),
+          new CacheManager(new MemoryIO(), "cache.json"),
+          () => provider,
+          { targetLang: "zh-CN", glossary: {}, isCostAuditLog: () => audit }
+        );
+      await mk(true).translateWithOutcome("Brand New Label", CTX);
+      expect(logs).toHaveLength(1);
+      expect(logs[0][0]).toBe("[UUT]");
+      expect(logs[0][1]).toBe("command"); // ctx.source
+      expect(logs[0][3]).toBe("Brand New Label".length); // masked.length（无数字 = 原文长度）
+      await mk(false).translateWithOutcome("Another Label", CTX);
+      expect(logs).toHaveLength(1); // 关闭时不新增
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("1.6 复审补强：还原校验违例的抑制护栏", () => {
+  it("违例译文进负缓存：同模板变体 5 分钟内不再全价送译（复审 #1）", async () => {
+    const stub = new StubProvider();
+    stub.behavior = () => "第 __UUTPH0__ 页"; // 吞第二个 token：持续违例
+    const { coordinator } = setup({ provider: stub });
+    expect((await coordinator.translateWithOutcome("Page 5 of 10", CTX)).outcome).toBe("failed");
+    expect((await coordinator.translateWithOutcome("Page 6 of 10", CTX)).outcome).toBe(
+      "negative-cache"
+    );
+    expect(stub.calls).toHaveLength(1); // 变体被 masked 负缓存拦截，未重付
+  });
+
+  it("连续 5 次异模板违例触发熔断：质量故障计入钱包护栏", async () => {
+    const stub = new StubProvider();
+    stub.behavior = () => "残缺 __UUTPH9__"; // 幻觉 token：恒违例
+    let circuitNotices = 0;
+    const { coordinator } = setup({ provider: stub, onCircuitOpen: () => circuitNotices++ });
+    const labels = ["Alpha page", "Beta page", "Gamma page", "Delta page", "Epsilon page"];
+    for (const label of labels) {
+      const r = await coordinator.translateWithOutcome(`${label} of 10 items`, CTX);
+      expect(r.outcome).toBe("failed");
+    }
+    expect(circuitNotices).toBe(1); // 第 5 次违例触发熔断
+    expect(coordinator.isCircuitOpen()).toBe(true);
+  });
+
+  it("cacheOnly × 缓存命中但条目残缺：fall-through 成 cache-miss，零 API（复审 #2 语义锁定）", async () => {
+    const stub = new StubProvider();
+    const cache = new CacheManager(new MemoryIO(), "cache.json");
+    const coordinator = new TranslationCoordinator(
+      new FilterEngine(),
+      cache,
+      () => stub,
+      { targetLang: "zh-CN", glossary: {} }
+    );
+    // 预置残缺条目：tgt 缺第二个 token（模拟旧版本写入的残缺译文）
+    const maskedKey = CacheManager.makeKey("Page __UUTPH0__ of __UUTPH1__", "stub", "zh-CN", "");
+    cache.set(maskedKey, {
+      src: "Page 5 of 10", tgt: "第 __UUTPH0__ 页", provider: "stub",
+      lang: "zh-CN", model: "", hits: 0, updatedAt: 1,
+    });
+    const r = await coordinator.translateWithOutcome("Page 7 of 20", CTX, { cacheOnly: true });
+    expect(r.outcome).toBe("cache-miss"); // 违例不触发 API：被 cacheOnly 分支拦下
+    expect(r.text).toBe("Page 7 of 20");
+    expect(stub.calls).toHaveLength(0);
   });
 });

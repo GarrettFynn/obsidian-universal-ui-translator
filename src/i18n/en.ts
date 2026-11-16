@@ -124,6 +124,13 @@ export const en: Record<string, string> = {
   "settings.general.display-mode.replace": "Translation only",
   "settings.general.display-mode.bilingual": "Bilingual",
   "settings.general.display-mode.original": "Original (paused)",
+  // 1.6 (M1): translation mode preset (efficiency-first default — batch notices cost the
+  // most tokens yet rarely live long enough to display a translation)
+  "settings.general.mode": "Translation mode",
+  "settings.general.mode.desc":
+    "Efficiency-first (default): skips Notice popups from other plugins (batch-task notices burn the most tokens and vanish in seconds, before any translation can land); Quality-first: translates everything visible. Number templates (e.g. \"New preset: 540/1234\") are normalized so each template is paid for only once",
+  "settings.general.mode.quality": "Quality first",
+  "settings.general.mode.efficiency": "Efficiency first (default)",
   "settings.general.bilingual-format": "Bilingual format",
   "settings.general.bilingual-format.desc":
     "Applies in bilingual mode only; no API impact (layout of the written-back text only)",
@@ -308,6 +315,10 @@ export const en: Record<string, string> = {
     "Default 30000 (R-23: raise for slow engines); configurable 5000–120000 (4.2.2). Timed-out requests count as failed: sent characters are usually still billed",
   "settings.advanced.debug": "Debug mode",
   "settings.advanced.debug.desc": "Console interception logs. Purely local, zero API cost",
+  // 1.6 (F): cost audit log
+  "settings.advanced.cost-audit-log": "Cost audit log",
+  "settings.advanced.cost-audit-log.desc":
+    "When on, every translation request prints a line to the Console (text truncated to 60 chars + source channel + char count) so you can audit what burns tokens and attach logs to bug reports. Purely local, zero extra API cost",
 
   // —— Provider error messages (batch 5: 33 entries, resolved via t() at message-construction time) ——
   "provider.http-not-injected": "HttpClient not injected",

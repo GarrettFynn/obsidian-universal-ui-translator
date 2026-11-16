@@ -44,7 +44,7 @@ describe("Prompt Profile：规则 1 按语言族取措辞", () => {
 
   it("规则 2–5 保持原样；规则 6 保持通用措辞（按 targetLang 模板化，无语言特例）", () => {
     const p = buildUiTranslationPrompt("fr");
-    expect(p).toContain("2. Preserve placeholders exactly: {0}, %s, {{variable}}");
+    expect(p).toContain("2. Preserve placeholders exactly: {0}, %s, {{variable}}, __UUTPH0__");
     expect(p).toContain("3. Preserve keyboard shortcuts exactly: Ctrl+P, Cmd+Shift+S");
     expect(p).toContain("4. Preserve brand names, plugin names and proper nouns");
     expect(p).toContain("5. Return ONLY the translation, no explanations");

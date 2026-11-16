@@ -360,6 +360,12 @@ export class MarketplacePatcher {
             firstError ??= res.error;
             return; // 不计 ok：父元素不打标，下次点击可重试
           }
+          // 1.6（E2）：高峰降级防御分支——throttle 判定已按 pluginId==="unknown" 甄别，
+          // 市场通道（pluginId:"marketplace"）触发面为零，此分支纯纵深防御：
+          // 不计 ok、不打 data-uut 标，风暴过后下次点击可重试（不显示为成功）
+          if (res.outcome === "throttled") {
+            return;
+          }
           const formatted = this.format(res.text, trimmed);
           if (formatted === null || formatted === trimmed) {
             if (formatted === null && res.text !== trimmed) {

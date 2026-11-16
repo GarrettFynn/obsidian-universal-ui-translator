@@ -70,7 +70,11 @@ export class DOMPatcher {
     /** R-12：多 document 观察所需的 app 引用；缺省时仅观察主 document（向后兼容） */
     private app?: unknown,
     /** R-22 时序修订：低频重扫间隔 ms（设置弹窗打开不触发 layout-change）；测试可注入 */
-    private rescanIntervalMs = 3000
+    private rescanIntervalMs = 3000,
+    /** 1.6（A）：Notice 通道跳过开关——效率档返回 true 时 .notice 文本不入译（其他插件
+     *  批量任务的通知最耗 token，且 Notice 5s 存活期常赶不上译文回写，白耗；效果档缺省
+     *  false 正常送译。入队前拦截：isSkipped 在 collectTextNodes/enqueue 两道闸生效） */
+    private skipNotice: () => boolean = () => false
   ) {}
 
   activate(): boolean {
@@ -218,6 +222,8 @@ export class DOMPatcher {
     for (const sel of SKIP_SELECTORS) {
       if (el.closest(sel)) return true;
     }
+    // 1.6（A）：效率档跳过 Notice 通道（白名单外追加的条件跳过；闭包实时读 settings）
+    if (this.skipNotice() && el.closest(".notice")) return true;
     return false;
   }
 
@@ -271,10 +277,30 @@ export class DOMPatcher {
       }
       return;
     }
-    const translated = await this.coordinator.translate(trimmed, {
+    // 1.6（E2）：改走 translateWithOutcome 取 outcome——throttled（效率档高峰降级）时
+    // 回滚去重记录并限次延迟重入队（复用 R-32 模式，上限 15；与 R-32 不可见重试共用
+    // retryAttempts 计数、互耗额度为已接受边界），防止"降级时 processed 固化 = 永久漏译"：
+    // 风暴期反复降级重试，队列深度回落后自动恢复翻译；超限接受漏译（节点重渲染时
+    // 作为新文本重新走全流程）
+    const res = await this.coordinator.translateWithOutcome(trimmed, {
       source: "dom",
       pluginId: "unknown",
     });
+    if (res.outcome === "throttled") {
+      this.processed.delete(node);
+      const attempts = (this.retryAttempts.get(node) ?? 0) + 1;
+      this.retryAttempts.set(node, attempts);
+      if (attempts <= 15) {
+        window.setTimeout(() => {
+          if (node.isConnected && this.documents.size > 0) {
+            this.enqueue(node, true);
+            this.scheduleIdle(); // R-33：重试入队后必须触发排空（enqueue 本身不调度）
+          }
+        }, 2000);
+      }
+      return;
+    }
+    const translated = res.text;
     if (!node.isConnected) return;
     let formatted = this.format(translated, trimmed);
     // 双语模式在状态栏降级：仅译文 + 父级 tooltip（5.1）

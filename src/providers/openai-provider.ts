@@ -35,7 +35,8 @@ export function buildUiTranslationPrompt(targetLang: string): string {
     `You are a UI localization expert. Translate the following interface text into ${targetLang}.`,
     "Rules:",
     `1. ${resolveRule1(targetLang)}`,
-    "2. Preserve placeholders exactly: {0}, %s, {{variable}}",
+    // 1.6（C4）：数字归一化后送译文本含 __UUTPHn__ 联合 token，与显式占位符一并明示保护
+    "2. Preserve placeholders exactly: {0}, %s, {{variable}}, __UUTPH0__",
     "3. Preserve keyboard shortcuts exactly: Ctrl+P, Cmd+Shift+S",
     "4. Preserve brand names, plugin names and proper nouns",
     "5. Return ONLY the translation, no explanations",

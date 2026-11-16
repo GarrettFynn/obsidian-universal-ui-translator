@@ -217,6 +217,15 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
       isCacheEnabled: () => this.settings.cacheEnabled,
       // 1.5（B3）：宽松缓存键开关（开时键去引擎/模型维度，跨模型复用译文）
       isLooseCacheKey: () => this.settings.looseCacheKey,
+      // 1.6（E1）：dom 高峰降级（效率档）——队列深度 > 30 时 dom 兜底通道暂停发新 API 请求
+      // （仅回写已缓存内容）。必须经 this 调用期取 batcher：refreshRuntime 会重建实例，
+      // 构造期捕获会读到旧实例（冷读终审钉死的装配红线）
+      shouldThrottleDom:
+        () =>
+          this.settings.mode === "efficiency" &&
+          (this.batcher?.pendingCount() ?? 0) > 30,
+      // 1.6（F）：成本审计日志（默认关）——懒闭包实时读 settings，开关热生效
+      isCostAuditLog: () => this.settings.costAuditLog,
       // 4.2.2 错误分类：Key 失效（401/403）立即引导，不等熔断
       onAuthFailure: () => new Notice(t("notice.auth-failed")),
       // v1.1.8：预算超限提示（types.ts 承诺的"超限提示"此前未实现，纯静默 = 用户实测"按钮失效"头号嫌疑）
@@ -578,7 +587,17 @@ export default class UniversalUiTranslatorPlugin extends Plugin {
     }
     if (on.dom && !this.domPatcher) {
       // R-12：传入 app 启用多 document 观察（popout 盲区，4.1.4 末节方案）
-      this.domPatcher = new DOMPatcher(this.coordinator, format, isBilingual, debug, this.app);
+      // 1.6（A/M1）：skipNotice 尾参——效率档跳过 Notice 通道；懒闭包实时读 settings，
+      // 模式切换经 saveSettings→refreshRuntime→rescanAllText 热生效，无需重建组件
+      this.domPatcher = new DOMPatcher(
+        this.coordinator,
+        format,
+        isBilingual,
+        debug,
+        this.app,
+        undefined,
+        () => this.settings.mode === "efficiency"
+      );
       this.domPatcher.activate();
     }
     // v1.1.0：社区市场条目级「译」按钮（旧 data.json 无此键，!== false 视为开）

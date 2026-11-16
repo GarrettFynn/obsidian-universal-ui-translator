@@ -153,6 +153,22 @@ export class UutSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           })
       );
+    // 1.6（M1）：翻译模式（下拉——Setting API 无 radio；displayMode 同款写法）。
+    // 模式 = 预设（Notice 通道跳过 + dom 高峰降级两个内部开关），经懒闭包实时读 settings
+    // 热生效，无需重建组件；数字归一化两档共享
+    new Setting(el)
+      .setName(t("settings.general.mode"))
+      .setDesc(t("settings.general.mode.desc"))
+      .addDropdown((d) =>
+        d
+          .addOption("quality", t("settings.general.mode.quality"))
+          .addOption("efficiency", t("settings.general.mode.efficiency"))
+          .setValue(s.mode)
+          .onChange(async (v) => {
+            s.mode = v as typeof s.mode;
+            await this.plugin.saveSettings();
+          })
+      );
     new Setting(el)
       .setName(t("settings.general.bilingual-format"))
       .setDesc(t("settings.general.bilingual-format.desc"))
@@ -842,6 +858,16 @@ export class UutSettingTab extends PluginSettingTab {
       .addToggle((toggle) =>
         toggle.setValue(s.debugMode).onChange(async (v) => {
           s.debugMode = v;
+          await this.plugin.saveSettings();
+        })
+      );
+    // 1.6（F）：成本审计日志（默认关）——治理反馈回路配套：用户可自查"谁在烧 token"
+    new Setting(el)
+      .setName(t("settings.advanced.cost-audit-log"))
+      .setDesc(t("settings.advanced.cost-audit-log.desc"))
+      .addToggle((toggle) =>
+        toggle.setValue(s.costAuditLog).onChange(async (v) => {
+          s.costAuditLog = v;
           await this.plugin.saveSettings();
         })
       );

@@ -151,6 +151,85 @@ export class FilterEngine {
   }
 
   /**
+   * 1.6（C1）：单趟联合提取——显式占位符（{0}/%s/{{var}}）与裸数字（整数/小数/千分位/
+   * 百分比）合并正则一次扫描、统一编号后逐 span 替换为 __UUTPHn__。
+   * 禁止两层串行调用 protectPlaceholders：两函数各自从 0 编号且数字正则会互噬 token
+   * 下标数字（审查实测 "%s" 丢失、"{{user2}}" 破坏）；replace 单趟天然规避互噬。
+   * 数字负向前瞻 (?![\da-zA-Z]) 排除粘连形态：字母紧跟（1st/10K）与回溯截断的数字
+   * 前缀（"10K" 中 \d+ 贪婪 "10" 被拒后回溯 "1"——前瞻同时排除数字，短前缀即被拒绝，
+   * 整个数字串保持原样；C 批次门禁实测抓出）。B2B 前后皆字母天然不 mask。
+   * 动态数字模板（"New preset: 540/1234" 型）masked 后同模板共享缓存键——归一化缓存的根基。
+   */
+  private static readonly MASK_PATTERN_SOURCE =
+    "\\{\\d+\\}|%[sd]|\\{\\{[^}]+\\}\\}|\\d+(?:[.,]\\d+)*%?(?![\\da-zA-Z])";
+
+  static maskAll(text: string): {
+    masked: string;
+    /** 与 masked 中 __UUTPHn__ 一一对应的原文 span（显式占位符原文形态或数字原文） */
+    spans: string[];
+    /** spans 中数字分支的原文值（还原校验用） */
+    numericValues: string[];
+  } {
+    const tokens: string[] = [];
+    const spans: string[] = [];
+    const numericValues: string[] = [];
+    // 每次从 source 新建（/g 的 lastIndex 有状态，静态复用会跨调用串位）
+    const re = new RegExp(FilterEngine.MASK_PATTERN_SOURCE, "g");
+    const masked = text.replace(re, (m) => {
+      const token = `__UUTPH${tokens.length}__`;
+      tokens.push(token);
+      spans.push(m);
+      // 显式占位符以 { 或 % 开头；数字分支以数字开头（还原校验只盯数字值）
+      if (/^\d/.test(m)) numericValues.push(m);
+      return token;
+    });
+    return { masked, spans, numericValues };
+  }
+
+  /**
+   * 1.6（C3）：按 spans 还原（token → 原文 span，含数字值）。
+   * 与既有 restorePlaceholders（token → token，供显式占位符直接回填）不同——
+   * maskAll 的 token 必须回填原文值，数字模板跨缓存命中才能各自还原正确数字。
+   */
+  static restoreSpans(translated: string, spans: string[]): string {
+    let out = translated;
+    spans.forEach((span, i) => {
+      out = out.split(`__UUTPH${i}__`).join(span);
+    });
+    return out;
+  }
+
+  /**
+   * 1.6（C2）：还原校验——masked 态译文的 token 编号集合必须与送译 masked 完全一致
+   * （不多不少：少 = 模型吞 token，多 = 模型幻觉 token），且还原后每个数字 token 的值
+   * 须以字符串形式出现（对正确还原是恒真安全网：guard 住"token 未被回填值"类回归；
+   * 已知边界：千分位形态译文去逗号会被误杀——罕见，接受，走回退原文）。
+   * 通过返回还原后的译文；违例返回 null（调用方走 failed：回退原文、不写缓存）。
+   */
+  static validateAndRestore(
+    rawMasked: string,
+    spans: string[],
+    numericValues: string[]
+  ): string | null {
+    const expected = new Set(spans.map((_, i) => `__UUTPH${i}__`));
+    const found = new Set<string>();
+    const re = /__UUTPH\d+__/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(rawMasked)) !== null) found.add(m[0]);
+    for (const tk of expected) {
+      if (!found.has(tk)) return null;
+    }
+    for (const tk of found) {
+      if (!expected.has(tk)) return null;
+    }
+    const restored = FilterEngine.restoreSpans(rawMasked, spans);
+    for (const v of numericValues) {
+      if (!restored.includes(v)) return null;
+    }
+    return restored;
+  }
+
+  /**
    * 规则 6 校验闭环：还原后译文与原文的占位符集合必须一致。
    * 不一致时调用方丢弃译文、回退原文，且不写入缓存（残缺译文落盘会永久化）。
    */

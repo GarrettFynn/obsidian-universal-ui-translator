@@ -2,6 +2,10 @@
 import { describe, expect, it } from "vitest";
 import { BatchTranslator } from "../src/core/batch-translator";
 import { TranslationProvider } from "../src/providers/base-provider";
+import { CacheManager } from "../src/core/cache-manager";
+import { TranslationCoordinator } from "../src/core/coordinator";
+import { FilterEngine } from "../src/filters/filter-engine";
+import { TextFileIO } from "../src/types";
 
 class RecordingProvider extends TranslationProvider {
   readonly id = "rec";
@@ -210,5 +214,139 @@ describe("BatchTranslator（设计文档 4.2.2）", () => {
     expect(await a).toBe("译:A");
     expect(await b).toBe("译:B");
     expect(p.batches).toEqual([["A"], ["B"]]);
+  });
+});
+
+describe("1.6 E：pendingCount（dom 高峰降级判定源；1.6.0 收尾 b：计入在途批次）", () => {
+  it("submit 后计增；flush 结算后归零", async () => {
+    const p = new RecordingProvider();
+    const bt = setup(p);
+    expect(bt.pendingCount()).toBe(0);
+    const [a, b] = [bt.submit("A"), bt.submit("B")];
+    expect(bt.pendingCount()).toBe(2);
+    await bt.flush();
+    expect(await a).toBe("译:A");
+    expect(await b).toBe("译:B");
+    expect(bt.pendingCount()).toBe(0);
+  });
+
+  it("同窗口相同文本去重后按去重条数计（共享同一 entry）", async () => {
+    const p = new RecordingProvider();
+    const bt = setup(p);
+    const [x1, x2] = [bt.submit("X"), bt.submit("X")];
+    expect(bt.pendingCount()).toBe(1); // byText 去重，queue 只有一条
+    void x2;
+    await bt.flush();
+    expect(await x1).toBe("译:X");
+    expect(bt.pendingCount()).toBe(0);
+  });
+
+  it("b：flush 在途期间计数不归零（API 未返回时 pendingCount 仍=批次条数），结算后归零", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    class GatedProvider extends RecordingProvider {
+      async translateBatch(texts: string[]): Promise<string[]> {
+        await gate; // 挂起：模拟批次结算期（API 慢）
+        return super.translateBatch(texts);
+      }
+    }
+    const p = new GatedProvider();
+    const bt = setup(p);
+    const a = bt.submit("Slow text entry");
+    const flushing = bt.flush();
+    await new Promise((r) => setTimeout(r, 50)); // flush 已取走 entries
+    expect(bt.pendingCount()).toBe(1); // 在途计入（原口径此处为 0——复审发现的结构性盲区）
+    release();
+    await flushing;
+    expect(await a).toBe("译:Slow text entry");
+    expect(bt.pendingCount()).toBe(0);
+  });
+});
+
+describe("1.6.0 收尾（b）：在途 >30 时 coordinator 真谓词 throttle 生效", () => {
+  it("40 条挂起在途 + 真实装配谓词（pendingCount>30）→ dom/unknown 请求 throttled；效果档不受影响", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    class GatedProvider extends RecordingProvider {
+      async translateBatch(texts: string[]): Promise<string[]> {
+        await gate;
+        return super.translateBatch(texts);
+      }
+    }
+    const provider = new GatedProvider();
+    const batcher = new BatchTranslator(() => provider);
+    // 真实装配形态（main.ts 口径）：translateVia 走 batcher、shouldThrottleDom 真谓词
+    const io: TextFileIO = {
+      read: async () => { throw new Error("ENOENT"); },
+      write: async () => {},
+      exists: async () => false,
+    };
+    const cache = new CacheManager(io, "cache.json");
+    let mode = "efficiency";
+    const coordinator = new TranslationCoordinator(
+      new FilterEngine(),
+      cache,
+      () => provider,
+      {
+        targetLang: "zh-CN",
+        glossary: {},
+        translateVia: (m: string, c?: string) => batcher.submit(m, c),
+        shouldThrottleDom: () => mode === "efficiency" && batcher.pendingCount() > 30,
+      }
+    );
+    // 垫高：40 条互异在途（挂起中）
+    const holds: Array<Promise<string>> = [];
+    for (let i = 0; i < 40; i++) holds.push(batcher.submit("hold entry text " + i));
+    const flushing = batcher.flush();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(batcher.pendingCount()).toBe(40); // 在途计入
+    const DOM_UNKNOWN = { source: "dom" as const, pluginId: "unknown" };
+    const r1 = await coordinator.translateWithOutcome("storm victim text", DOM_UNKNOWN);
+    expect(r1.outcome).toBe("throttled"); // 真谓词触发——此前仅真机直调可证的链路，单测锁定
+    mode = "quality";
+    // 发起即完成 throttle 判定（同步段）——先判定后放行，避免 r2 的 submit
+    // 等待下次 flush 而下次 flush 又被 flushing 守卫挡到 gate 之后的死锁
+    const r2p = coordinator.translateWithOutcome("quality channel text", DOM_UNKNOWN);
+    release();
+    const r2 = await r2p;
+    expect(r2.outcome).not.toBe("throttled"); // 效果档豁免
+    await flushing;
+    await Promise.allSettled(holds);
+  });
+});
+
+describe("1.6.0 收尾（b）：多批结算的逐批递减与 queue+inflight 叠加", () => {
+  it("maxBatchItems=2 分两批：在途逐批递减；结算期二次 submit 叠加计数", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    class GatedProvider extends RecordingProvider {
+      // 第一批挂起（gate），第二批立即返回——锁"逐批递减"中期精度
+      seen = 0;
+      async translateBatch(texts: string[]): Promise<string[]> {
+        this.seen++;
+        if (this.seen === 1) await gate;
+        return super.translateBatch(texts);
+      }
+    }
+    const p = new GatedProvider();
+    const bt = setup(p, { maxBatchItems: 2 });
+    const holds = [bt.submit("multi one"), bt.submit("multi two"), bt.submit("multi three")];
+    const flushing = bt.flush();
+    expect(bt.pendingCount()).toBe(3); // 取走即全部在途（worker 尚未结算任何批次）
+    await new Promise((r) => setTimeout(r, 50)); // 第二批（未挂 gate）已结算 → 逐批递减
+    expect(bt.pendingCount()).toBe(2); // inflight 3→2：逐批递减的中期精度（冷读 minor 缺口锁定）
+    // 结算期（flush 在途）新 submit 进新 queue——R-19 叠加口径：queue + inflight
+    const late = bt.submit("late arrival");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(bt.pendingCount()).toBe(3); // queue 1 + inflight 2
+    release(); // 放行第一批；第二批立即结算 → inflight 逐批递减至 0
+    await flushing;
+    expect(await Promise.all(holds)).toEqual(["译:multi one", "译:multi two", "译:multi three"]);
+    expect(bt.pendingCount()).toBeLessThanOrEqual(1); // 仅剩 late 所在窗口（100ms 后自然 flush）
+    release = () => {};
+    void late.catch(() => undefined); // late 由后续窗口自然结算（测试不阻塞其完成）
+    await new Promise((r) => setTimeout(r, 300));
+    expect(bt.pendingCount()).toBe(0);
+    expect(await late).toBe("译:late arrival");
   });
 });

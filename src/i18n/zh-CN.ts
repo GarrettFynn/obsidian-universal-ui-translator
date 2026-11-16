@@ -121,6 +121,12 @@ export const zhCN: Record<string, string> = {
   "settings.general.display-mode.replace": "纯译文",
   "settings.general.display-mode.bilingual": "双语对照",
   "settings.general.display-mode.original": "原文（暂停回写）",
+  // 1.6（M1）：翻译模式预设（效率优先默认——Notice 类批量通知翻译价值低且必耗 token）
+  "settings.general.mode": "翻译模式",
+  "settings.general.mode.desc":
+    "效率优先（默认）：跳过其他插件的 Notice 弹窗提示（批量任务的通知最耗 token，且弹窗几秒即逝、译文常来不及显示）；效果优先：尽量翻译一切可见文本，数字模板（如 \"New preset: 540/1234\"）归一化后同类提示仅首次产生请求",
+  "settings.general.mode.quality": "效果优先",
+  "settings.general.mode.efficiency": "效率优先（默认）",
   "settings.general.bilingual-format": "双语格式",
   "settings.general.bilingual-format.desc": "仅双语对照模式生效；对 API 消耗无影响（仅改变回写排版）",
   "settings.general.bilingual-format.t-first": "译文 (原文)",
@@ -299,6 +305,10 @@ export const zhCN: Record<string, string> = {
     "默认 30000（R-23：慢引擎上调）；可配置 5000–120000（4.2.2）。超时的请求按失败处理：已发送的字符通常仍会计费",
   "settings.advanced.debug": "调试模式",
   "settings.advanced.debug.desc": "Console 输出拦截日志。纯本地行为，零 API 消耗",
+  // 1.6（F）：成本审计日志
+  "settings.advanced.cost-audit-log": "成本审计日志",
+  "settings.advanced.cost-audit-log.desc":
+    "开启后每条送译请求在 Console 打印明细（文本截断 60 字符 + 来源通道 + 字符数），可自查「谁在烧 token」、反馈问题时附日志定位。纯本地行为，零额外 API 消耗",
 
   // —— Provider 错误消息（批次五 33 条：值逐字取自源码字面量；消息构造时刻 t() 解析）——
   "provider.http-not-injected": "HttpClient 未注入",
